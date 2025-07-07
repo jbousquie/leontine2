@@ -14,16 +14,19 @@ The application is under active development. Below is the current state and tech
 ```
 leontine2/
 ├── assets/                 # Static assets
-│   └── main.css             # Application styling
+│   ├── main.css            # Main application styling
+│   └── api-status.css      # API status component styling
 ├── src/
-│   ├── api/                # API client code (pending)
+│   ├── api/                # API client code
+│   │   └── mod.rs          # API client with status endpoint implementation
 │   ├── components/         # UI components
-│   │   ├── api_status/      # API status display
-│   │   ├── settings/        # Settings management
-│   │   └── transcription/   # File upload and transcription
+│   │   ├── api_status/     # API status display
+│   │   ├── settings/       # Settings management
+│   │   └── transcription/  # File upload and transcription (pending)
 │   ├── config/             # Application configuration
+│   │   └── mod.rs          # Configuration constants and endpoints
 │   ├── hooks/              # Custom Dioxus hooks
-│   │   └── persistent.rs    # localStorage persistence
+│   │   └── persistent.rs   # localStorage persistence
 │   └── types/              # Shared type definitions
 ├── Cargo.toml              # Project dependencies
 └── README.md               # Project documentation
@@ -39,10 +42,11 @@ The application displays three main components:
    - Two-signal pattern for form handling (committed vs. editing value)
    - Visual indication when settings are saved
 
-2. **API Status Panel (pending implementation)**:
-   - Shows status of API connection
-   - Displays server information
-   - Status indicators for connection state
+2. **API Status Panel**:
+   - Shows status of API connection with color-coded flag (green, red, gray)
+   - Displays queue state information (number of queued and processing jobs)
+   - Updates status when API URL changes in settings
+   - Visual indication of connection state (online, error, not configured)
 
 3. **Transcription Panel (pending implementation)**:
    - Upload area for audio file selection
@@ -88,16 +92,20 @@ pub fn use_persistent<T: Serialize + DeserializeOwned + Default + Clone + 'stati
 
 #### Dependencies
 
-- dioxus = "0.6.0"
-- gloo-storage = "0.2"
-- serde = "1.0"
+- dioxus = { version = "0.6.3", features = ["web"] }
 - log = "0.4"
+- web-sys = "0.3"
+- gloo = "0.11.0"
+- gloo-storage = "0.3.0"
+- gloo-net = "0.6.0"
+- serde = { version = "1.0", features = ["derive"] }
+- serde_json = "1.0"
 
 ## Feature Roadmap
 
 1. ✅ Project structure and organization
 2. ✅ Settings panel with localStorage persistence
-3. ⬜ API status panel integration
+3. ✅ API status panel integration
 4. ⬜ File upload functionality
 5. ⬜ Transcription status tracking
 6. ⬜ Results download implementation
@@ -123,3 +131,5 @@ The application uses the following patterns:
 - Settings panel with API URL configuration
 - Persistent storage of settings in localStorage
 - Input validation and visual feedback
+- API status indicator with real-time status check
+- Reusable API client module for API communication

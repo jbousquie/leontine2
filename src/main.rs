@@ -1,8 +1,8 @@
+mod api;
 mod components;
 mod config;
 mod hooks;
 
-use components::settings::SettingsPanel;
 use dioxus::prelude::*;
 
 fn main() {
@@ -20,6 +20,9 @@ fn App() -> Element {
             style {
                 {include_str!("../assets/main.css")}
             }
+            style {
+                {include_str!("../assets/api-status.css")}
+            }
         }
 
         // Application container
@@ -31,10 +34,16 @@ fn App() -> Element {
                 h1 { "{title}" }
             }
 
-            // Settings section - our first component
+            // Settings section
             section {
                 class: "settings-section",
-                SettingsPanel {}
+                components::settings::SettingsPanel {}
+            }
+
+            // API Status section
+            section {
+                class: "api-status-section",
+                components::api_status::ApiStatus {}
             }
 
             footer {

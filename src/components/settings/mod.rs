@@ -2,14 +2,18 @@
 //! Allows users to configure and persist the API URL
 
 use crate::config::DEFAULT_API_URL;
+use crate::hooks::persistent::use_persistent;
 use dioxus::prelude::*;
 
 /// Settings panel component for managing API configuration
 #[component]
 pub fn SettingsPanel() -> Element {
-    // In Dioxus 0.6, we use use_signal for reactive state
-    let mut api_url = use_signal(|| DEFAULT_API_URL.to_string());
-    let mut input_value = use_signal(|| api_url().clone());
+    // Two-signal pattern for form handling:
+    // api_url: The committed value used by the application (persisted value)
+    // input_value: The current value in the input field (changes with each keystroke)
+    // This separation prevents unnecessary side effects during typing and enables validation before saving
+    let mut api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
+    let mut input_value = use_signal(|| api_url.get());
     let mut show_saved = use_signal(|| false);
 
     // Reset the saved message after a delay
@@ -47,9 +51,9 @@ pub fn SettingsPanel() -> Element {
                 }
                 button {
                     onclick: move |_| {
+                        // Commit the input value to the application state and localStorage
                         api_url.set(input_value().clone());
-                        // TODO: Add proper localStorage implementation later
-                        log::info!("URL saved: {}", api_url());
+                        log::info!("URL saved: {}", api_url.get());
                         show_saved.set(true);
                     },
                     "Save URL"

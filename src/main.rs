@@ -1,5 +1,6 @@
 mod components;
 mod config;
+mod hooks;
 
 use components::settings::SettingsPanel;
 use dioxus::prelude::*;

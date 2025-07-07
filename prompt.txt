@@ -17,23 +17,25 @@ When the transcription is complete, a button is displayed to download the transc
 Project stucture :
 
 leontine2/
-├── assets/                 # Static assets directory
+├── assets/                # Static assets directory
 ├── src/
 │   ├── api/               # API integration directory (empty for now)
 │   ├── components/        # UI components
 │   │   ├── api_status/      # API status component
-│   │   │   └── mod.rs         # API status implementation
+│   │   │   └── mod.rs         # API status implementation (basic)
 │   │   ├── settings/        # Settings component
 │   │   │   └── mod.rs         # Settings implementation with URL persistence
 │   │   ├── transcription/   # Transcription component
-│   │   │   └── mod.rs         # Transcription implementation
+│   │   │   └── mod.rs         # Transcription implementation (basic)
 │   │   └── mod.rs          # Components module declaration
 │   ├── config/            # Configuration constants
-│   │   └── mod.rs          # Contains DEFAULT_API_URL
-│   ├── hooks/             # Custom hooks directory (empty for now)
+│   │   └── mod.rs          # Contains DEFAULT_API_URL constant
+│   ├── hooks/             # Custom hooks directory
+│   │   ├── mod.rs          # Hooks module declaration
+│   │   └── persistent.rs   # Implementation of use_persistent hook
 │   ├── types/             # Type definitions directory (empty for now)
-│   └── main.rs           # Application entry point
-├── Cargo.toml            # Project dependencies and configuration
-├── Dioxus.toml          # Dioxus configuration
-├── README.md            # Project documentation
-└── prompt.txt           # Development guidelines and requirements
+│   └── main.rs            # Application entry point
+├── Cargo.toml             # Project dependencies and configuration
+├── Dioxus.toml           # Dioxus configuration
+├── README.md             # Project documentation
+└── prompt.txt            # Development guidelines and requirements

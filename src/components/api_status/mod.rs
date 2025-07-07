@@ -16,7 +16,7 @@ pub fn ApiStatus() -> Element {
     // Get the API URL from persistent storage
     let api_url = use_persistent("api_url", || "".to_string());
 
-    // Define component state signals
+    // --- State Signals ---
     let mut flag_color = use_signal(|| "gray".to_string());
     let mut status_message = use_signal(|| "API URL not configured".to_string());
     let mut queue_info = use_signal(|| String::new());
@@ -24,8 +24,11 @@ pub fn ApiStatus() -> Element {
 
     // This signal acts as a trigger to re-run the `use_resource` hook
     let mut refresh_trigger = use_signal(|| 0);
-    // This signal ensures the timer setup effect runs only once
-    let mut timers_initialized = use_signal(|| false);
+
+    // Signals to hold the timer handles. This makes them part of the component's state,
+    // protecting them from being dropped during re-renders.
+    let mut initial_timeout_handle = use_signal(|| None::<Timeout>);
+    let mut interval_handle = use_signal(|| None::<Interval>);
 
     // If URL is empty, set initial UI state
     if api_url.get().is_empty() {
@@ -34,15 +37,13 @@ pub fn ApiStatus() -> Element {
         queue_info.set(String::new());
     }
 
+    // --- Helper Functions ---
     // Function to format a timestamp using WASM-compatible APIs
     fn format_timestamp() -> String {
-        // Get milliseconds since UNIX epoch from JavaScript
         let now_ms = Date::now();
-        // Convert to seconds and nanoseconds for chrono
         let now_secs = (now_ms / 1000.0) as i64;
         let now_nanos = ((now_ms % 1000.0) * 1_000_000.0) as u32;
 
-        // Create a DateTime object and format it to H:M:S
         let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now_secs, now_nanos)
             .unwrap_or_default()
             .format("%H:%M:%S")
@@ -51,6 +52,7 @@ pub fn ApiStatus() -> Element {
         format!("Last checked at {}", dt)
     }
 
+    // --- Data Fetching and Effects ---
     // `use_resource` to fetch API status reactively
     let api_status_resource = use_resource(move || {
         let url = api_url.get();
@@ -67,64 +69,53 @@ pub fn ApiStatus() -> Element {
             // Set UI to a loading state before the request
             flag_color.set("yellow".to_string());
             status_message.set("Checking API status...".to_string());
-
-            // Update timestamp at the start of the check
             last_checked.set(format_timestamp());
 
-            // Make the API request
-            let result = get_status(&url).await;
-            info!("API status check completed: {:?}", result.is_ok());
-            result
+            get_status(&url).await
         }
     });
 
     // `use_effect` to handle the result of the API call from the resource
     use_effect(move || {
         // Match on a reference to the resource's value to avoid move errors
-        match &*api_status_resource.value().read() {
-            Some(Ok(status)) => {
-                info!(
-                    "API online: {} queued jobs, {} processing",
-                    status.queue_state.queued_jobs, status.queue_state.processing_jobs
-                );
-
-                flag_color.set("green".to_string());
-                status_message.set("API Online".to_string());
-                queue_info.set(format!(
-                    "{} jobs in queue, {} jobs processing",
-                    status.queue_state.queued_jobs, status.queue_state.processing_jobs
-                ));
-            }
-            Some(Err(err)) => {
-                // Clone error data because we are borrowing it from the resource
-                let error_msg = match err {
-                    ApiError::RequestFailed(msg) => format!("Request failed: {}", msg.clone()),
-                    ApiError::HttpError(code, msg) => {
-                        format!("HTTP error {}: {}", code, msg.clone())
-                    }
-                    ApiError::ParseError(msg) => format!("Invalid API response: {}", msg.clone()),
-                };
-
-                error!("API status check failed: {}", error_msg);
-                flag_color.set("red".to_string());
-                status_message.set(error_msg);
-                queue_info.set(String::new());
-            }
-            None => {
-                // Resource is loading, UI state is set inside the resource's future
+        if let Some(result) = api_status_resource.value().read().as_ref() {
+            match result {
+                Ok(status) => {
+                    info!(
+                        "API online: {} queued, {} processing",
+                        status.queue_state.queued_jobs, status.queue_state.processing_jobs
+                    );
+                    flag_color.set("green".to_string());
+                    status_message.set("API Online".to_string());
+                    queue_info.set(format!(
+                        "{} jobs in queue, {} jobs processing",
+                        status.queue_state.queued_jobs, status.queue_state.processing_jobs
+                    ));
+                }
+                Err(err) => {
+                    let error_msg = match err {
+                        ApiError::RequestFailed(msg) => format!("Request failed: {}", msg.clone()),
+                        ApiError::HttpError(code, msg) => {
+                            format!("HTTP error {}: {}", code, msg.clone())
+                        }
+                        ApiError::ParseError(msg) => {
+                            format!("Invalid API response: {}", msg.clone())
+                        }
+                    };
+                    error!("API status check failed: {}", error_msg);
+                    flag_color.set("red".to_string());
+                    status_message.set(error_msg);
+                    queue_info.set(String::new());
+                }
             }
         }
     });
 
-    // `use_effect` to set up timers for initial and periodic checks.
-    // This effect is guarded to run only once on component mount.
-    use_effect(move || {
-        if *timers_initialized.read() {
-            return;
-        }
-        *timers_initialized.write() = true;
-
-        info!("Setting up API check timers (this should only happen once).");
+    // `use_hook` runs its closure once on component mount. It is the correct
+    // place to set up timers, subscriptions, or other side effects that
+    // should not be re-run on every render.
+    use_hook(move || {
+        info!("Setting up API check timers (this will only happen once).");
 
         // Set up initial check with a short delay
         let initial_timeout = Timeout::new(API_STATUS_INITIAL_CHECK_MS as u32, move || {
@@ -132,30 +123,28 @@ pub fn ApiStatus() -> Element {
                 "Initial API status check triggered after {}ms",
                 API_STATUS_INITIAL_CHECK_MS
             );
-            // Correctly update the signal to avoid rules of hooks violation
             *refresh_trigger.write() += 1;
         });
+        initial_timeout_handle.set(Some(initial_timeout));
 
+        // Set up periodic check
         let interval = Interval::new(API_STATUS_CHECK_INTERVAL_MS as u32, move || {
-            info!("");
-            info!("========================================");
-            info!("= Periodic Timer Fired (every 30s)     =");
-            info!("= Triggering API status check...       =");
-            info!("========================================");
-            info!("");
-            // Correctly update the signal
             *refresh_trigger.write() += 1;
         });
-
-        // Return a cleanup function to clear timers when component unmounts
-        (move || {
-            info!("Component unmounting, clearing timers");
-            drop(initial_timeout);
-            drop(interval);
-        })()
+        interval_handle.set(Some(interval));
     });
 
-    // Render the component's UI
+    // `use_drop` provides a dedicated place for cleanup logic to run when the
+    // component is unmounted.
+    use_drop(move || {
+        info!("Component unmounting, clearing timers.");
+        // Taking the value out of the signal will cause the handle to be dropped,
+        // which correctly cancels the timer.
+        initial_timeout_handle.take();
+        interval_handle.take();
+    });
+
+    // --- Render ---
     rsx! {
         div { class: "api-status",
             div { class: "status-flag",
@@ -163,7 +152,6 @@ pub fn ApiStatus() -> Element {
                 div { class: "status-text",
                     span { class: "status-label", "{status_message()}" }
 
-                    // Show queue info if available
                     if !queue_info().is_empty() {
                         span { class: "queue-info", "{queue_info()}" }
                     }
@@ -176,7 +164,6 @@ pub fn ApiStatus() -> Element {
                     button {
                         onclick: move |_| {
                             info!("Manual refresh triggered");
-                            // Correctly update the signal
                             *refresh_trigger.write() += 1;
                         },
                         "Refresh Status"

@@ -1,135 +1,53 @@
 # Leontine Transcription Client
 
-Leontine is built with [Dioxus](https://dioxuslabs.com/) v0.6.0 and Rust.
-It's a client application for audio transcription using the [WhisperX API](https://github.com/jbousquie/whisper_api).
+Leontine is a responsive web application built with Rust and the Dioxus framework (v0.6). It serves as a user-friendly client for an audio transcription service powered by the [WhisperX API](https://github.com/jbousquie/whisper_api).
 
 ## Project Status
 
-The application is under active development. Below is the current state and technical architecture.
+The application is under active development. The core infrastructure for settings management and real-time API monitoring is complete. The next phase focuses on implementing the transcription workflow.
 
-## Architecture
+## Core Features
 
-### Project Structure
+The user interface is composed of two main functional components:
 
-```
-leontine2/
-├── assets/                 # Static assets
-│   ├── main.css            # Main application styling
-│   └── api-status.css      # API status component styling
-├── src/
-│   ├── api/                # API client code
-│   │   └── mod.rs          # API client with status endpoint implementation
-│   ├── components/         # UI components
-│   │   ├── api_status/     # API status display
-│   │   ├── settings/       # Settings management
-│   │   └── transcription/  # File upload and transcription (pending)
-│   ├── config/             # Application configuration
-│   │   └── mod.rs          # Configuration constants and endpoints
-│   ├── hooks/              # Custom Dioxus hooks
-│   │   └── persistent.rs   # localStorage persistence
-│   └── types/              # Shared type definitions
-├── Cargo.toml              # Project dependencies
-└── README.md               # Project documentation
-```
+### 1. Settings Panel
+- **API URL Configuration**: Allows the user to set and save the base URL for the WhisperX API endpoint.
+- **Persistent State**: The configured URL is saved to the browser's `localStorage` and persists across sessions, providing a seamless user experience.
+- **Robust Form Handling**: Implements a "two-signal" pattern to differentiate between the value being edited and the saved value, with clear visual feedback when changes are saved.
 
-### Core Components
+### 2. API Status Panel
+- **Real-time Status Monitoring**: Automatically checks the API status upon loading and then periodically every 30 seconds.
+- **Visual Feedback**: Displays a color-coded flag (green for online, red for error, gray for not configured) to give an at-a-glance indication of the API's health.
+- **Queue Information**: Fetches and displays the number of jobs currently in the queue and being processed by the API.
+- **Last Checked Timestamp**: Shows a human-readable timestamp (`HH:MM:SS`) for the last successful or failed status check.
+- **Manual Refresh**: Includes a "Refresh Status" button to allow users to trigger an immediate status check on demand.
+- **Reactive Updates**: The status check cycle automatically respects changes made to the API URL in the settings panel.
 
-The application displays three main components:
+## Technical Architecture
 
-1. **Settings Panel**:
-   - User can configure the API URL
-   - Value persists in local storage
-   - Two-signal pattern for form handling (committed vs. editing value)
-   - Visual indication when settings are saved
+The application is built on modern Rust and Dioxus patterns.
 
-2. **API Status Panel**:
-   - Shows status of API connection with color-coded flag (green, red, gray)
-   - Displays queue state information (number of queued and processing jobs)
-   - Updates status when API URL changes in settings
-   - Visual indication of connection state (online, error, not configured)
+### Key Implementation Patterns
+- **Component-Based UI**: The application is broken down into modular, reusable components (`SettingsPanel`, `ApiStatus`).
+- **Reactive State Management**: State is managed primarily through Dioxus signals (`use_signal`).
+- **Asynchronous Operations**: The `use_resource` hook is used to handle asynchronous API calls in a reactive and idiomatic way.
+- **Lifecycle Management**:
+    - `use_hook` is leveraged for one-time setup logic, such as initializing timers.
+    - `use_drop` provides a dedicated hook for safe, guaranteed cleanup (e.g., clearing timers) when a component unmounts.
+- **Custom Hooks**: A `use_persistent` hook abstracts away the logic for interacting with `localStorage`, making state persistence clean and reusable.
+- **WASM-Compatible Timers**: Uses `gloo-timers` (`Timeout`, `Interval`) for time-based events, triggered by a `refresh_trigger` signal to integrate with the reactive system.
 
-3. **Transcription Panel (pending implementation)**:
-   - Upload area for audio file selection
-   - Message area for transcription status display
-   - Download button for completed transcriptions
+### Core Dependencies
+- `dioxus = { version = "0.6.3", features = ["web"] }`
+- `gloo` (timers, storage, net)
+- `serde` / `serde_json` for serialization
+- `chrono` for time formatting
+- `wasm-logger` for browser console logging
 
-### Technical Implementation
+## Future Roadmap
 
-#### State Management
-
-- Using Dioxus signals for reactive state
-- Custom `use_persistent` hook for localStorage persistence
-- Two-signal pattern for form handling (separating UI state from stored state)
-
-```rust
-// Example of two-signal pattern in settings component
-let api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
-let input_value = use_signal(|| api_url.get());
-let is_modified = use_signal(|| false);
-```
-
-#### Persistent Storage
-
-- Custom hook for localStorage integration
-- Leverages `gloo-storage` for browser storage API
-- Automatic serialization/deserialization with serde
-
-```rust
-// Persistent storage hook implementation
-pub fn use_persistent<T: Serialize + DeserializeOwned + Default + Clone + 'static>(
-    key: impl ToString,
-    init: impl FnOnce() -> T,
-) -> UsePersistent<T> {
-    // Implementation details...
-}
-```
-
-#### Styling
-
-- Modern, responsive design
-- CSS variables for consistent theming
-- Mobile-friendly layout
-
-#### Dependencies
-
-- dioxus = { version = "0.6.3", features = ["web"] }
-- log = "0.4"
-- web-sys = "0.3"
-- gloo = "0.11.0"
-- gloo-storage = "0.3.0"
-- gloo-net = "0.6.0"
-- serde = { version = "1.0", features = ["derive"] }
-- serde_json = "1.0"
-
-## Feature Roadmap
-
-1. ✅ Project structure and organization
-2. ✅ Settings panel with localStorage persistence
-3. ✅ API status panel integration
-4. ⬜ File upload functionality
-5. ⬜ Transcription status tracking
-6. ⬜ Results download implementation
-
-## Design Principles
-
-1. **Modularity**: Each component has a single responsibility
-2. **Persistence**: User settings and jobs survive page reloads
-3. **Responsiveness**: Works well on desktop and mobile devices
-4. **User Feedback**: Clear indications of system status
-
-## Implementation Notes
-
-The application uses the following patterns:
-
-1. **Component-based architecture**: UI split into reusable components
-2. **Custom hooks**: Encapsulated logic for persistence and other behaviors
-3. **Configuration constants**: Centralized configuration in dedicated module
-4. **Reactive updates**: UI automatically reflects state changes
-
-## Current Working Features
-
-- Settings panel with API URL configuration
-- Persistent storage of settings in localStorage
-- Input validation and visual feedback
-- API status indicator with real-time status check
-- Reusable API client module for API communication
+1.  ✅ Settings panel with `localStorage` persistence.
+2.  ✅ Real-time API status panel with periodic and manual updates.
+3.  ⬜ **File Upload**: Implement a drag-and-drop area for audio files.
+4.  ⬜ **Transcription Status**: Track the progress of active transcription jobs.
+5.  ⬜ **Results Download**: Allow users to download completed transcripts.

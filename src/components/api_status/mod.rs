@@ -24,6 +24,8 @@ pub fn ApiStatus() -> Element {
 
     // This signal acts as a trigger to re-run the `use_resource` hook
     let mut refresh_trigger = use_signal(|| 0);
+    // This signal ensures the timer setup effect runs only once
+    let mut timers_initialized = use_signal(|| false);
 
     // If URL is empty, set initial UI state
     if api_url.get().is_empty() {
@@ -114,8 +116,16 @@ pub fn ApiStatus() -> Element {
         }
     });
 
-    // `use_effect` to set up timers for initial and periodic checks
+    // `use_effect` to set up timers for initial and periodic checks.
+    // This effect is guarded to run only once on component mount.
     use_effect(move || {
+        if *timers_initialized.read() {
+            return;
+        }
+        *timers_initialized.write() = true;
+
+        info!("Setting up API check timers (this should only happen once).");
+
         // Set up initial check with a short delay
         let initial_timeout = Timeout::new(API_STATUS_INITIAL_CHECK_MS as u32, move || {
             info!(
@@ -126,14 +136,13 @@ pub fn ApiStatus() -> Element {
             *refresh_trigger.write() += 1;
         });
 
-        // Set up periodic check
-        info!(
-            "Setting up periodic API check every {}ms",
-            API_STATUS_CHECK_INTERVAL_MS
-        );
-
         let interval = Interval::new(API_STATUS_CHECK_INTERVAL_MS as u32, move || {
-            info!("Triggering periodic API status check");
+            info!("");
+            info!("========================================");
+            info!("= Periodic Timer Fired (every 30s)     =");
+            info!("= Triggering API status check...       =");
+            info!("========================================");
+            info!("");
             // Correctly update the signal
             *refresh_trigger.write() += 1;
         });

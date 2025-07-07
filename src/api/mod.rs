@@ -2,7 +2,7 @@
 
 use crate::config::API_STATUS_ENDPOINT;
 use gloo_net::http::Request;
-use log::{debug, error};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 
 /// Error type for API operations
@@ -81,16 +81,23 @@ pub struct QueueState {
 /// The API status response or an error
 pub async fn get_status(api_url: &str) -> Result<ApiStatus, ApiError> {
     if api_url.is_empty() {
+        warn!("API URL is empty, cannot check status");
         return Err(ApiError::RequestFailed(
             "API URL is not configured".to_string(),
         ));
     }
 
     let url = format!("{}{}", api_url, API_STATUS_ENDPOINT);
-    debug!("Fetching API status from: {}", url);
+    info!("Fetching API status from: {}", url);
 
     let response = match Request::get(&url).send().await {
-        Ok(resp) => resp,
+        Ok(resp) => {
+            info!(
+                "API status response received with status: {}",
+                resp.status()
+            );
+            resp
+        }
         Err(err) => {
             error!("Failed to send request: {}", err);
             return Err(ApiError::RequestFailed(err.to_string()));
@@ -101,14 +108,23 @@ pub async fn get_status(api_url: &str) -> Result<ApiStatus, ApiError> {
         let status = response.status();
         let text = match response.text().await {
             Ok(t) => t,
-            Err(_) => "Unknown error".to_string(),
+            Err(e) => {
+                error!("Failed to get error text: {}", e);
+                "Unknown error".to_string()
+            }
         };
         error!("API returned error status {}: {}", status, text);
         return Err(ApiError::HttpError(status, text));
     }
 
     match response.json::<ApiStatus>().await {
-        Ok(status) => Ok(status),
+        Ok(status) => {
+            info!(
+                "API status parsed successfully: {:?} jobs queued, {:?} jobs processing",
+                status.queue_state.queued_jobs, status.queue_state.processing_jobs
+            );
+            Ok(status)
+        }
         Err(err) => {
             error!("Failed to parse API status response: {}", err);
             Err(ApiError::ParseError(err.to_string()))

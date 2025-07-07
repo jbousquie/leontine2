@@ -14,20 +14,14 @@ pub fn SettingsPanel() -> Element {
     // This separation prevents unnecessary side effects during typing and enables validation before saving
     let mut api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
     let mut input_value = use_signal(|| api_url.get());
-    let mut show_saved = use_signal(|| false);
 
-    // Reset the saved message after a delay
+    // Track if the input has been modified from the saved value
+    let mut is_modified = use_signal(|| false);
+
+    // Update is_modified when input changes
     use_effect(move || {
-        if show_saved() {
-            let timeout = gloo::timers::callback::Timeout::new(2000, move || {
-                show_saved.set(false);
-            });
-
-            // Return cleanup function
-            return (move || {
-                drop(timeout);
-            })();
-        }
+        is_modified.set(input_value() != api_url.get());
+        (|| {})()
     });
 
     rsx! {
@@ -45,25 +39,28 @@ pub fn SettingsPanel() -> Element {
                     id: "api-url",
                     r#type: "text",
                     value: "{input_value}",
-                    onchange: move |evt| {
+                    // Capture all input changes with a single handler
+                    oninput: move |evt| {
                         input_value.set(evt.value().clone());
+                        is_modified.set(evt.value() != api_url.get());
                     }
                 }
-                button {
-                    onclick: move |_| {
-                        // Commit the input value to the application state and localStorage
-                        api_url.set(input_value().clone());
-                        log::info!("URL saved: {}", api_url.get());
-                        show_saved.set(true);
-                    },
-                    "Save URL"
-                }
 
-                // Show saved message
-                if show_saved() {
+                // Show either the Save button or the Saved message
+                if is_modified() {
+                    button {
+                        onclick: move |_| {
+                            // Commit the input value to the application state and localStorage
+                            api_url.set(input_value().clone());
+                            log::info!("URL saved: {}", api_url.get());
+                            is_modified.set(false);
+                        },
+                        "Save URL"
+                    }
+                } else {
                     span {
                         class: "saved-message",
-                        "Saved!"
+                        "Saved"
                     }
                 }
             }

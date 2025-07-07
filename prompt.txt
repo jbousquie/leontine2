@@ -1,0 +1,39 @@
+Leontine is built with [Dioxus](https://dioxuslabs.com/) and Rust.
+It's a client application for audio transcription using the [WhisperX API](https://github.com/jbousquie/whisper_api).
+
+Its development is done step by step. You don't implement anything that I don't ask you to implement You can make suggestions though.
+Each new step or a new feature, fixed or added, is documented in the [CHANGELOG](CHANGELOG.md) and is also documented in this file @prompt.txt below so we keep the last current state of the project understable at one read.
+
+The application displays three main components :
+- the settings panel where the user can configure the API URL (this value will be persisted in the local storage)
+- the API status panel where the user can see the status of the API connection
+- the transcription panel where the user can upload an audio file, start the transcription process from a button and then see the transcription process status.
+
+The transcription panel contents two parts  :
+- the upload area where the user can upload an audio file and start the transcription job
+- the message area where the user can see current the transcription job status.
+When the transcription is complete, a button is displayed to download the transcribed file.
+
+Project stucture :
+
+leontine2/
+├── assets/                 # Static assets directory
+├── src/
+│   ├── api/               # API integration directory (empty for now)
+│   ├── components/        # UI components
+│   │   ├── api_status/      # API status component
+│   │   │   └── mod.rs         # API status implementation
+│   │   ├── settings/        # Settings component
+│   │   │   └── mod.rs         # Settings implementation with URL persistence
+│   │   ├── transcription/   # Transcription component
+│   │   │   └── mod.rs         # Transcription implementation
+│   │   └── mod.rs          # Components module declaration
+│   ├── config/            # Configuration constants
+│   │   └── mod.rs          # Contains DEFAULT_API_URL
+│   ├── hooks/             # Custom hooks directory (empty for now)
+│   ├── types/             # Type definitions directory (empty for now)
+│   └── main.rs           # Application entry point
+├── Cargo.toml            # Project dependencies and configuration
+├── Dioxus.toml          # Dioxus configuration
+├── README.md            # Project documentation
+└── prompt.txt           # Development guidelines and requirements

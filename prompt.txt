@@ -1,41 +1,125 @@
-Leontine is built with [Dioxus](https://dioxuslabs.com/) and Rust.
+# Leontine Transcription Client
+
+Leontine is built with [Dioxus](https://dioxuslabs.com/) v0.6.0 and Rust.
 It's a client application for audio transcription using the [WhisperX API](https://github.com/jbousquie/whisper_api).
 
-Its development is done step by step. You don't implement anything that I don't ask you to implement You can make suggestions though.
-Each new step or a new feature, fixed or added, is documented in the [CHANGELOG](CHANGELOG.md) and is also documented in this file @prompt.txt below so we keep the last current state of the project understable at one read.
+## Project Status
 
-The application displays three main components :
-- the settings panel where the user can configure the API URL (this value will be persisted in the local storage)
-- the API status panel where the user can see the status of the API connection
-- the transcription panel where the user can upload an audio file, start the transcription process from a button and then see the transcription process status.
+The application is under active development. Below is the current state and technical architecture.
 
-The transcription panel contents two parts  :
-- the upload area where the user can upload an audio file and start the transcription job
-- the message area where the user can see current the transcription job status.
-When the transcription is complete, a button is displayed to download the transcribed file.
+## Architecture
 
-Project stucture :
+### Project Structure
 
+```
 leontine2/
-├── assets/                # Static assets directory
+├── assets/                 # Static assets
+│   └── main.css             # Application styling
 ├── src/
-│   ├── api/               # API integration directory (empty for now)
-│   ├── components/        # UI components
-│   │   ├── api_status/      # API status component
-│   │   │   └── mod.rs         # API status implementation (basic)
-│   │   ├── settings/        # Settings component
-│   │   │   └── mod.rs         # Settings implementation with URL persistence
-│   │   ├── transcription/   # Transcription component
-│   │   │   └── mod.rs         # Transcription implementation (basic)
-│   │   └── mod.rs          # Components module declaration
-│   ├── config/            # Configuration constants
-│   │   └── mod.rs          # Contains DEFAULT_API_URL constant
-│   ├── hooks/             # Custom hooks directory
-│   │   ├── mod.rs          # Hooks module declaration
-│   │   └── persistent.rs   # Implementation of use_persistent hook
-│   ├── types/             # Type definitions directory (empty for now)
-│   └── main.rs            # Application entry point
-├── Cargo.toml             # Project dependencies and configuration
-├── Dioxus.toml           # Dioxus configuration
-├── README.md             # Project documentation
-└── prompt.txt            # Development guidelines and requirements
+│   ├── api/                # API client code (pending)
+│   ├── components/         # UI components
+│   │   ├── api_status/      # API status display
+│   │   ├── settings/        # Settings management
+│   │   └── transcription/   # File upload and transcription
+│   ├── config/             # Application configuration
+│   ├── hooks/              # Custom Dioxus hooks
+│   │   └── persistent.rs    # localStorage persistence
+│   └── types/              # Shared type definitions
+├── Cargo.toml              # Project dependencies
+└── README.md               # Project documentation
+```
+
+### Core Components
+
+The application displays three main components:
+
+1. **Settings Panel**:
+   - User can configure the API URL
+   - Value persists in local storage
+   - Two-signal pattern for form handling (committed vs. editing value)
+   - Visual indication when settings are saved
+
+2. **API Status Panel (pending implementation)**:
+   - Shows status of API connection
+   - Displays server information
+   - Status indicators for connection state
+
+3. **Transcription Panel (pending implementation)**:
+   - Upload area for audio file selection
+   - Message area for transcription status display
+   - Download button for completed transcriptions
+
+### Technical Implementation
+
+#### State Management
+
+- Using Dioxus signals for reactive state
+- Custom `use_persistent` hook for localStorage persistence
+- Two-signal pattern for form handling (separating UI state from stored state)
+
+```rust
+// Example of two-signal pattern in settings component
+let api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
+let input_value = use_signal(|| api_url.get());
+let is_modified = use_signal(|| false);
+```
+
+#### Persistent Storage
+
+- Custom hook for localStorage integration
+- Leverages `gloo-storage` for browser storage API
+- Automatic serialization/deserialization with serde
+
+```rust
+// Persistent storage hook implementation
+pub fn use_persistent<T: Serialize + DeserializeOwned + Default + Clone + 'static>(
+    key: impl ToString,
+    init: impl FnOnce() -> T,
+) -> UsePersistent<T> {
+    // Implementation details...
+}
+```
+
+#### Styling
+
+- Modern, responsive design
+- CSS variables for consistent theming
+- Mobile-friendly layout
+
+#### Dependencies
+
+- dioxus = "0.6.0"
+- gloo-storage = "0.2"
+- serde = "1.0"
+- log = "0.4"
+
+## Feature Roadmap
+
+1. ✅ Project structure and organization
+2. ✅ Settings panel with localStorage persistence
+3. ⬜ API status panel integration
+4. ⬜ File upload functionality
+5. ⬜ Transcription status tracking
+6. ⬜ Results download implementation
+
+## Design Principles
+
+1. **Modularity**: Each component has a single responsibility
+2. **Persistence**: User settings and jobs survive page reloads
+3. **Responsiveness**: Works well on desktop and mobile devices
+4. **User Feedback**: Clear indications of system status
+
+## Implementation Notes
+
+The application uses the following patterns:
+
+1. **Component-based architecture**: UI split into reusable components
+2. **Custom hooks**: Encapsulated logic for persistence and other behaviors
+3. **Configuration constants**: Centralized configuration in dedicated module
+4. **Reactive updates**: UI automatically reflects state changes
+
+## Current Working Features
+
+- Settings panel with API URL configuration
+- Persistent storage of settings in localStorage
+- Input validation and visual feedback

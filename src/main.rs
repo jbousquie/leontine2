@@ -14,16 +14,16 @@ fn App() -> Element {
     let title = "Leontine - Audio Transcription";
 
     rsx! {
+        // Set up document head
         head {
             title { "{title}" }
-            link {
-                rel: "stylesheet",
-                href: "/assets/main.css"
+            style {
+                {include_str!("../assets/main.css")}
             }
         }
 
-        // Main application layout
-        main {
+        // Application container
+        div {
             class: "app-container",
 
             header {
@@ -31,10 +31,22 @@ fn App() -> Element {
                 h1 { "{title}" }
             }
 
-            // Settings section - our first implemented component
+            // Settings section - our first component
             section {
                 class: "settings-section",
                 SettingsPanel {}
+            }
+
+            footer {
+                class: "app-footer",
+                p {
+                    "Powered by "
+                    a {
+                        href: "https://github.com/jbousquie/whisper_api",
+                        target: "_blank",
+                        "WhisperX API"
+                    }
+                }
             }
         }
     }

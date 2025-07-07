@@ -1,21 +1,19 @@
 //! API Status panel component
-//! Displays the current status of the WhisperX API connection
-
-use dioxus::prelude::*;
-use gloo::timers::callback::{Interval, Timeout};
-use log::{error, info};
-use web_sys::js_sys::Date; // Use JavaScript's Date object for WASM compatibility
+//! Displays the current status of the WhisperX API connection.
+//! The shared `api_url` state is received as a prop from the parent component.
 
 use crate::api::{get_status, ApiError};
 use crate::config::{API_STATUS_CHECK_INTERVAL_MS, API_STATUS_INITIAL_CHECK_MS};
-use crate::hooks::persistent::use_persistent;
+use crate::hooks::persistent::UsePersistent;
+use dioxus::prelude::*;
+use gloo::timers::callback::{Interval, Timeout};
+use log::{error, info};
+use web_sys::js_sys::Date;
 
-/// API Status Panel component
+/// API Status Panel component.
+/// Receives the shared `api_url` signal from its parent.
 #[component]
-pub fn ApiStatus() -> Element {
-    // Get the API URL from persistent storage
-    let api_url = use_persistent("api_url", || "".to_string());
-
+pub fn ApiStatus(api_url: UsePersistent<String>) -> Element {
     // --- State Signals ---
     let mut flag_color = use_signal(|| "gray".to_string());
     let mut status_message = use_signal(|| "API URL not configured".to_string());
@@ -24,7 +22,6 @@ pub fn ApiStatus() -> Element {
 
     // This signal acts as a trigger to re-run the `use_resource` hook
     let mut refresh_trigger = use_signal(|| 0);
-
     // Signals to hold the timer handles. This makes them part of the component's state,
     // protecting them from being dropped during re-renders.
     let mut initial_timeout_handle = use_signal(|| None::<Timeout>);
@@ -55,8 +52,8 @@ pub fn ApiStatus() -> Element {
     // --- Data Fetching and Effects ---
     // `use_resource` to fetch API status reactively
     let api_status_resource = use_resource(move || {
+        // This resource now depends on the `api_url` prop and the `refresh_trigger`
         let url = api_url.get();
-        // Depend on the trigger. When it changes, this resource re-runs.
         let _ = refresh_trigger();
 
         async move {
@@ -77,14 +74,9 @@ pub fn ApiStatus() -> Element {
 
     // `use_effect` to handle the result of the API call from the resource
     use_effect(move || {
-        // Match on a reference to the resource's value to avoid move errors
         if let Some(result) = api_status_resource.value().read().as_ref() {
             match result {
                 Ok(status) => {
-                    info!(
-                        "API online: {} queued, {} processing",
-                        status.queue_state.queued_jobs, status.queue_state.processing_jobs
-                    );
                     flag_color.set("green".to_string());
                     status_message.set("API Online".to_string());
                     queue_info.set(format!(
@@ -111,27 +103,24 @@ pub fn ApiStatus() -> Element {
         }
     });
 
-    // `use_hook` runs its closure once on component mount. It is the correct
-    // place to set up timers, subscriptions, or other side effects that
-    // should not be re-run on every render.
+    // `use_hook` runs its closure once on component mount to set up timers.
     use_hook(move || {
-        info!("Setting up API check timers (this will only happen once).");
+        // This check is slightly redundant since use_hook runs once, but it's
+        // a safe pattern if this logic were ever moved to a use_effect.
+        if initial_timeout_handle.read().is_none() {
+            info!("Setting up API check timers (this should only happen once).");
 
-        // Set up initial check with a short delay
-        let initial_timeout = Timeout::new(API_STATUS_INITIAL_CHECK_MS as u32, move || {
-            info!(
-                "Initial API status check triggered after {}ms",
-                API_STATUS_INITIAL_CHECK_MS
-            );
-            *refresh_trigger.write() += 1;
-        });
-        initial_timeout_handle.set(Some(initial_timeout));
+            let initial_timeout = Timeout::new(API_STATUS_INITIAL_CHECK_MS as u32, move || {
+                *refresh_trigger.write() += 1;
+            });
+            initial_timeout_handle.set(Some(initial_timeout));
 
-        // Set up periodic check
-        let interval = Interval::new(API_STATUS_CHECK_INTERVAL_MS as u32, move || {
-            *refresh_trigger.write() += 1;
-        });
-        interval_handle.set(Some(interval));
+            let interval = Interval::new(API_STATUS_CHECK_INTERVAL_MS as u32, move || {
+                info!("Periodic timer fired. Triggering API status check.");
+                *refresh_trigger.write() += 1;
+            });
+            interval_handle.set(Some(interval));
+        }
     });
 
     // `use_drop` provides a dedicated place for cleanup logic to run when the
@@ -140,8 +129,12 @@ pub fn ApiStatus() -> Element {
         info!("Component unmounting, clearing timers.");
         // Taking the value out of the signal will cause the handle to be dropped,
         // which correctly cancels the timer.
-        initial_timeout_handle.take();
-        interval_handle.take();
+        if let Some(handle) = initial_timeout_handle.take() {
+            drop(handle);
+        }
+        if let Some(handle) = interval_handle.take() {
+            drop(handle);
+        }
     });
 
     // --- Render ---
@@ -158,15 +151,6 @@ pub fn ApiStatus() -> Element {
 
                     if !last_checked().is_empty() {
                         div { class: "timestamp", "{last_checked()}" }
-                    }
-
-                    // Debug button to manually refresh
-                    button {
-                        onclick: move |_| {
-                            info!("Manual refresh triggered");
-                            *refresh_trigger.write() += 1;
-                        },
-                        "Refresh Status"
                     }
                 }
             }

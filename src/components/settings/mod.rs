@@ -1,27 +1,24 @@
 //! Settings panel component
-//! Allows users to configure and persist the API URL
+//! Allows users to configure the API URL. The state is lifted to the parent component.
 
-use crate::config::DEFAULT_API_URL;
-use crate::hooks::persistent::use_persistent;
+use crate::hooks::persistent::UsePersistent;
 use dioxus::prelude::*;
 
-/// Settings panel component for managing API configuration
+/// Settings panel component for managing API configuration.
+/// It receives the shared `api_url` state as a prop from its parent.
 #[component]
-pub fn SettingsPanel() -> Element {
-    // Two-signal pattern for form handling:
-    // api_url: The committed value used by the application (persisted value)
-    // input_value: The current value in the input field (changes with each keystroke)
-    // This separation prevents unnecessary side effects during typing and enables validation before saving
-    let mut api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
+pub fn SettingsPanel(mut api_url: UsePersistent<String>) -> Element {
+    // The `input_value` signal holds the temporary state of the input field.
+    // This separation prevents unnecessary side effects during typing.
     let mut input_value = use_signal(|| api_url.get());
 
-    // Track if the input has been modified from the saved value
+    // Track if the input has been modified from the saved value.
     let mut is_modified = use_signal(|| false);
 
-    // Update is_modified when input changes
+    // `use_effect` to reactively check if the input value differs from the persisted one.
+    // This runs whenever `input_value` or `api_url` changes.
     use_effect(move || {
-        is_modified.set(input_value() != api_url.get());
-        (|| {})()
+        is_modified.set(input_value.read().as_str() != api_url.get().as_str());
     });
 
     rsx! {
@@ -39,21 +36,22 @@ pub fn SettingsPanel() -> Element {
                     id: "api-url",
                     r#type: "text",
                     value: "{input_value}",
-                    // Capture all input changes with a single handler
+                    // On every keystroke, update the local `input_value` signal.
+                    // This does NOT modify the persistent state yet.
                     oninput: move |evt| {
-                        input_value.set(evt.value().clone());
-                        is_modified.set(evt.value() != api_url.get());
+                        input_value.set(evt.value());
                     }
                 }
 
-                // Show either the Save button or the Saved message
+                // Conditionally render the "Save URL" button or "Saved" message
+                // based on whether the input has been modified.
                 if is_modified() {
                     button {
+                        // When the user clicks "Save", commit the change to the persistent state.
+                        // This updates the signal in the parent `App` component and writes to localStorage.
                         onclick: move |_| {
-                            // Commit the input value to the application state and localStorage
-                            api_url.set(input_value().clone());
-                            log::info!("URL saved: {}", api_url.get());
-                            is_modified.set(false);
+                            api_url.set(input_value.read().clone());
+                            log::info!("New API URL saved: {}", api_url.get());
                         },
                         "Save URL"
                     }

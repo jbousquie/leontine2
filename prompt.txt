@@ -29,13 +29,14 @@ The application is built on modern Rust and Dioxus patterns.
 
 ### Key Implementation Patterns
 - **Component-Based UI**: The application is broken down into modular, reusable components (`SettingsPanel`, `ApiStatus`).
-- **Reactive State Management**: State is managed primarily through Dioxus signals (`use_signal`).
-- **Asynchronous Operations**: The `use_resource` hook is used to handle asynchronous API calls in a reactive and idiomatic way.
-- **Lifecycle Management**:
-    - `use_hook` is leveraged for one-time setup logic, such as initializing timers.
+- **Lifted State Management**: To ensure a single source of truth, shared state (like the `api_url` signal) is "lifted up" to the nearest common ancestor component, `App`. The `App` component owns the state and is the single source of truth.
+- **State Sharing via Props**: The parent `App` component passes the shared state down to child components (`SettingsPanel`, `ApiStatus`) as reactive props. This allows sibling components to communicate and stay in sync, as changes made in one component are automatically reflected in the other.
+- **Reactive Asynchronous Operations**: The `use_resource` hook is used to handle asynchronous API calls in a reactive and idiomatic way. The resource automatically re-runs when its dependencies (like the shared `api_url` signal) change.
+- **Component Lifecycle Hooks**:
+    - `use_hook` is leveraged for one-time setup logic, such as initializing timers, which should not be re-run on every render.
     - `use_drop` provides a dedicated hook for safe, guaranteed cleanup (e.g., clearing timers) when a component unmounts.
-- **Custom Hooks**: A `use_persistent` hook abstracts away the logic for interacting with `localStorage`, making state persistence clean and reusable.
-- **WASM-Compatible Timers**: Uses `gloo-timers` (`Timeout`, `Interval`) for time-based events, triggered by a `refresh_trigger` signal to integrate with the reactive system.
+- **Custom State Hooks**: A `use_persistent` hook abstracts away the logic for interacting with `localStorage`, making state persistence clean and reusable.
+- **Time-Based Reactivity**: Uses `gloo-timers` (`Timeout`, `Interval`) for time-based events. These timers trigger updates to a dedicated `refresh_trigger` signal, integrating the imperative nature of timers with Dioxus's declarative, reactive system.
 
 ### Core Dependencies
 - `dioxus = { version = "0.6.3", features = ["web"] }`
@@ -48,6 +49,7 @@ The application is built on modern Rust and Dioxus patterns.
 
 1.  ✅ Settings panel with `localStorage` persistence.
 2.  ✅ Real-time API status panel with periodic and manual updates.
-3.  ⬜ **File Upload**: Implement a drag-and-drop area for audio files.
-4.  ⬜ **Transcription Status**: Track the progress of active transcription jobs.
-5.  ⬜ **Results Download**: Allow users to download completed transcripts.
+3.  ✅ Robust, shared state management via "lifting state up" pattern.
+4.  ⬜ **File Upload**: Implement a drag-and-drop area for audio files.
+5.  ⬜ **Transcription Status**: Track the progress of active transcription jobs.
+6.  ⬜ **Results Download**: Allow users to download completed transcripts.

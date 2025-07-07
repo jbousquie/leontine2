@@ -34,6 +34,7 @@ pub(crate) struct StorageEntry<T> {
 }
 
 /// Storage that persists across application reloads
+#[derive(PartialEq)]
 pub struct UsePersistent<T: 'static> {
     inner: Signal<StorageEntry<T>>,
 }

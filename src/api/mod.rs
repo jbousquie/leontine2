@@ -189,7 +189,11 @@ pub async fn submit_transcription(
     let url = format!("{}{}", api_url, API_TRANSCRIPTION_ENDPOINT);
     info!("Submitting transcription to: {}", url);
 
-    let response = Request::post(&url).body(form_data)?.send().await?;
+    let response = Request::post(&url)
+        .header("Accept", "application/json")
+        .body(form_data)?
+        .send()
+        .await?;
 
     if !response.ok() {
         let status = response.status();

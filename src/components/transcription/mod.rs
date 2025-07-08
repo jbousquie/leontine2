@@ -1,6 +1,7 @@
 //! Transcription panel component
 //! Manages file selection, state, and actions for transcription.
 
+use crate::api::{self, ApiError, TranscriptionJob};
 use crate::document::eval;
 use crate::hooks::persistent::UsePersistent;
 use dioxus::html::HasFileData;
@@ -15,6 +16,7 @@ enum TranscriptionStatus {
     Idle,
     FileSelected,
     Transcribing,
+    Completed(Result<TranscriptionJob, ApiError>),
 }
 
 // --- Component Props ---
@@ -35,9 +37,8 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
     let api_url_prop = props.api_url;
 
     // --- Resource for the API call ---
-    // This resource will re-run when `status` changes.
-    let _transcription_resource = use_resource(move || async move {
-        // We only want to run the logic when the status changes to `Transcribing`.
+    // This resource will re-run when `status` changes to `Transcribing`.
+    use_resource(move || async move {
         if *status.read() != TranscriptionStatus::Transcribing {
             return;
         }
@@ -48,24 +49,31 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
         let api_url = api_url_prop.get();
 
         if let Some(file) = file_to_upload {
-            if let Some(file_name) = file.files().first() {
-                info!(
-                    "Preparing to transcribe file '{}' using API at '{}'",
-                    file_name, api_url
-                );
-                // --- TODO: Implement the actual file upload and API call here ---
-            }
+            // Call the API function to submit the file.
+            let result = api::submit_transcription(&api_url, &file).await;
+            // Update the status with the result of the API call.
+            status.set(TranscriptionStatus::Completed(result));
         } else {
-            // This is an inconsistent state. If we are 'Transcribing' but have no file, reset.
-            status.set(TranscriptionStatus::Idle);
+            // This is an inconsistent state; reset with an error.
+            status.set(TranscriptionStatus::Completed(Err(
+                ApiError::FileNotAvailable,
+            )));
         }
     });
 
-    // --- Event Handlers ---
-    let is_transcribing = move || *status.read() == TranscriptionStatus::Transcribing;
+    // --- Event Handlers and Helpers ---
 
+    // A helper to determine if the UI should be locked from user input.
+    let is_locked = move || {
+        matches!(
+            *status.read(),
+            TranscriptionStatus::Transcribing | TranscriptionStatus::Completed(_)
+        )
+    };
+
+    // Handles file selection from either drag-drop or the file input.
     let mut handle_file_selection = move |file_engine: Arc<dyn FileEngine>| {
-        if is_transcribing() {
+        if is_locked() {
             return;
         }
         if !file_engine.files().is_empty() {
@@ -74,45 +82,20 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
         }
     };
 
-    let on_drop = move |evt: DragEvent| {
-        evt.prevent_default();
-        if is_transcribing() {
-            return;
-        }
-        is_dragging.set(false);
-        if let Some(file_engine) = evt.files() {
-            handle_file_selection(file_engine);
-        }
-    };
-
-    let on_file_change = move |evt: FormEvent| {
-        if is_transcribing() {
-            return;
-        }
-        if let Some(file_engine) = evt.files() {
-            handle_file_selection(file_engine);
-        }
-    };
-
-    let on_clear_or_cancel = move |_| {
-        // Reset Dioxus state
+    // Resets the component to its initial state.
+    let reset_state = move |_| {
         selected_file.set(None);
         status.set(TranscriptionStatus::Idle);
-
-        // Reset the native file input's value to allow re-selection of the same file.
+        // Clear the native file input's value to allow re-selecting the same file.
         let _ = eval(r#"document.getElementById('file-upload-input').value = '';"#);
-
-        // Note: For a real implementation, we would also need to cancel the running `use_resource` future.
-        // Dioxus 0.6 will make this easier with `use_future` and `use_coroutine`.
     };
 
-    // --- Dynamic CSS classes for the upload area ---
+    // --- Dynamic CSS classes ---
     let mut upload_area_class = String::from("upload-area");
-    if is_dragging() && !is_transcribing() {
+    if is_dragging() && !is_locked() {
         upload_area_class.push_str(" dragging");
     }
-    if is_transcribing() {
-        // This can be used to style the area as disabled, e.g., with lower opacity.
+    if is_locked() {
         upload_area_class.push_str(" disabled");
     }
 
@@ -125,18 +108,26 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
 
                 // --- Drag-and-Drop Event Handlers ---
                 ondragover: move |evt| {
-                    if !is_transcribing() {
+                    if !is_locked() {
                         evt.prevent_default();
                         is_dragging.set(true);
                     }
                 },
                 ondragleave: move |evt| {
-                    if !is_transcribing() {
+                    if !is_locked() {
                         evt.prevent_default();
                         is_dragging.set(false);
                     }
                 },
-                ondrop: on_drop,
+                ondrop: move |evt| {
+                    evt.prevent_default();
+                    if !is_locked() {
+                        is_dragging.set(false);
+                        if let Some(file_engine) = evt.files() {
+                            handle_file_selection(file_engine);
+                        }
+                    }
+                },
 
                 // --- Hidden file input for the button ---
                 input {
@@ -144,23 +135,27 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                     id: "file-upload-input",
                     accept: "audio/*",
                     multiple: false,
-                    disabled: is_transcribing(),
+                    disabled: is_locked(),
                     style: "display: none;",
-                    onchange: on_file_change,
+                    onchange: move |evt| {
+                         if let Some(file_engine) = evt.files() {
+                            handle_file_selection(file_engine);
+                        }
+                    },
                 },
 
-                // --- UI Content based on State ---
+                // --- Main UI Content (changes based on state) ---
                 div {
                     class: "upload-content",
 
-                    // Show selected file name when available
+                    // Persistently show the selected file name if it exists
                     if let Some(file_engine) = selected_file() {
                         if let Some(file_name) = file_engine.files().first() {
                              p { "Selected file: ", strong { "{file_name}" } }
                         }
                     }
 
-                    // Show content and buttons based on the current status
+                    // Render different controls and messages based on the current status
                     match status() {
                         TranscriptionStatus::Idle => rsx!{
                             p { "Drag and drop an audio file here, or click the button below." }
@@ -176,7 +171,7 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                                 class: "action-buttons",
                                 button {
                                     class: "button-clear",
-                                    onclick: on_clear_or_cancel,
+                                    onclick: reset_state,
                                     "Clear Selection"
                                 }
                                 button {
@@ -187,13 +182,37 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                             }
                         },
                         TranscriptionStatus::Transcribing => rsx!{
-                            p { class: "transcribing-message", "Transcribing... Please wait." }
-                            button {
-                                class: "button-cancel",
-                                onclick: on_clear_or_cancel,
-                                "Cancel"
-                            }
+                            p { class: "transcribing-message", "Submitting job... Please wait." }
                         },
+                        TranscriptionStatus::Completed(result) => {
+                            // Render the result of the API call
+                            let result_display = match result {
+                                Ok(job) => rsx! {
+                                    div { class: "success-message",
+                                        p { "Job submitted successfully!" }
+                                        p { "Job ID: ", code { "{job.job_id}" } }
+                                        p { "Status: ", code { "{job.job_status}" } }
+                                    }
+                                },
+                                Err(err) => rsx! {
+                                    div { class: "error-message",
+                                        p { "Failed to submit transcription job:" }
+                                        p { code { "{err:?}" } }
+                                    }
+                                }
+                            };
+                            rsx! {
+                                {result_display},
+                                div {
+                                    class: "action-buttons",
+                                    button {
+                                        class: "button-new",
+                                        onclick: reset_state,
+                                        "Start New Transcription"
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

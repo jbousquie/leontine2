@@ -6,6 +6,9 @@ pub const DEFAULT_API_URL: &str = "https://llm.iut-rodez.fr/leontine/api";
 /// Path to the API status endpoint
 pub const API_STATUS_ENDPOINT: &str = "/status";
 
+/// Path to the API transcription endpoint
+pub const API_TRANSCRIPTION_ENDPOINT: &str = "/transcription";
+
 /// Initial API status check delay in milliseconds (check once when the component mounts)
 pub const API_STATUS_INITIAL_CHECK_MS: u64 = 100;
 

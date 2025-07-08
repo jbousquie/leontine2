@@ -94,6 +94,11 @@ pub fn ApiStatus(api_url: UsePersistent<String>) -> Element {
                         ApiError::ParseError(msg) => {
                             format!("Invalid API response: {}", msg.clone())
                         }
+                        ApiError::FileNotAvailable => {
+                            // This case should not be reachable for the status check,
+                            // but we handle it for completeness.
+                            "File not available".to_string()
+                        }
                     };
                     error!("API status check failed: {}", error_msg);
                     flag_color.set("red".to_string());

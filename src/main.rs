@@ -60,6 +60,11 @@ fn App() -> Element {
                 components::api_status::ApiStatus { api_url: api_url }
             }
 
+            section {
+                class: "transcription-section",
+                components::transcription::TranscriptionPanel {}
+            }
+
             footer {
                 class: "app-footer",
                 p {

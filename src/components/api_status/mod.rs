@@ -13,6 +13,7 @@ use web_sys::js_sys::Date;
 /// API Status Panel component.
 /// Receives the shared `api_url` signal from its parent.
 #[component]
+#[allow(non_snake_case)]
 pub fn ApiStatus(api_url: UsePersistent<String>) -> Element {
     // --- State Signals ---
     let mut flag_color = use_signal(|| "gray".to_string());

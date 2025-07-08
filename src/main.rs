@@ -62,7 +62,7 @@ fn App() -> Element {
 
             section {
                 class: "transcription-section",
-                components::transcription::TranscriptionPanel {}
+                components::transcription::TranscriptionPanel { api_url: api_url }
             }
 
             footer {

@@ -1,155 +1,200 @@
 //! Transcription panel component
-//! Contains both the file upload area and the transcription status area
-use crate::dioxus_elements::FileEngine;
+//! Manages file selection, state, and actions for transcription.
+
 use crate::document::eval;
+use crate::hooks::persistent::UsePersistent;
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
+use dioxus_elements::FileEngine;
+use log::info;
 use std::sync::Arc;
 
-/// The main transcription panel, which combines the file upload area and a message/status area.
-#[component]
-pub fn TranscriptionPanel() -> Element {
-    // This signal holds the state of the selected file across child components.
-    // Dioxus file events use Arc for thread-safety.
-    let selected_file: Signal<Option<Arc<dyn FileEngine>>> = use_signal(|| None);
-    // This signal tracks if a file is being dragged over the drop zone for UI feedback.
-    let is_dragging = use_signal(|| false);
-
-    rsx! {
-        div {
-            class: "transcription-panel",
-            h2 { "Transcription" }
-            // --- Child Components ---
-            UploadArea {
-                selected_file: selected_file,
-                is_dragging: is_dragging,
-            }
-            MessageArea {
-                selected_file: selected_file
-            }
-        }
-    }
+/// Represents the current state of the transcription UI, acting as a simple state machine.
+#[derive(Clone, PartialEq, Debug)]
+enum TranscriptionStatus {
+    Idle,
+    FileSelected,
+    Transcribing,
 }
 
 // --- Component Props ---
 
 #[derive(Props, Clone, PartialEq)]
-struct UploadAreaProps {
-    selected_file: Signal<Option<Arc<dyn FileEngine>>>,
-    is_dragging: Signal<bool>,
+pub struct TranscriptionPanelProps {
+    pub api_url: UsePersistent<String>,
 }
 
-#[derive(Props, Clone, PartialEq)]
-struct MessageAreaProps {
-    selected_file: Signal<Option<Arc<dyn FileEngine>>>,
-}
-
-// --- Private Child Components ---
-
-/// A component for handling file uploads via drag-and-drop or a file input button.
+/// The main transcription panel, which combines file upload, state management, and action buttons.
 #[component]
-fn UploadArea(props: UploadAreaProps) -> Element {
-    let mut selected_file = props.selected_file;
-    let mut is_dragging = props.is_dragging;
-    let dragging_class = if is_dragging() { "dragging" } else { "" };
+pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
+    // --- State Signals ---
+    let mut status = use_signal(|| TranscriptionStatus::Idle);
+    let mut selected_file: Signal<Option<Arc<dyn FileEngine>>> = use_signal(|| None);
+    let mut is_dragging = use_signal(|| false);
+
+    let api_url_prop = props.api_url;
+
+    // --- Resource for the API call ---
+    // This resource will re-run when `status` changes.
+    let _transcription_resource = use_resource(move || async move {
+        // We only want to run the logic when the status changes to `Transcribing`.
+        if *status.read() != TranscriptionStatus::Transcribing {
+            return;
+        }
+
+        info!("Transcription process triggered.");
+
+        let file_to_upload = selected_file.read().clone();
+        let api_url = api_url_prop.get();
+
+        if let Some(file) = file_to_upload {
+            if let Some(file_name) = file.files().first() {
+                info!(
+                    "Preparing to transcribe file '{}' using API at '{}'",
+                    file_name, api_url
+                );
+                // --- TODO: Implement the actual file upload and API call here ---
+            }
+        } else {
+            // This is an inconsistent state. If we are 'Transcribing' but have no file, reset.
+            status.set(TranscriptionStatus::Idle);
+        }
+    });
 
     // --- Event Handlers ---
+    let is_transcribing = move || *status.read() == TranscriptionStatus::Transcribing;
 
-    let on_file_change = move |evt: FormEvent| {
-        if let Some(file_engine) = evt.files() {
-            if !file_engine.files().is_empty() {
-                selected_file.set(Some(file_engine.clone()));
-            }
+    let mut handle_file_selection = move |file_engine: Arc<dyn FileEngine>| {
+        if is_transcribing() {
+            return;
+        }
+        if !file_engine.files().is_empty() {
+            selected_file.set(Some(file_engine));
+            status.set(TranscriptionStatus::FileSelected);
         }
     };
 
     let on_drop = move |evt: DragEvent| {
-        // Prevent the browser's default behavior for dropped files.
         evt.prevent_default();
+        if is_transcribing() {
+            return;
+        }
         is_dragging.set(false);
         if let Some(file_engine) = evt.files() {
-            if !file_engine.files().is_empty() {
-                selected_file.set(Some(file_engine.clone()));
-            }
+            handle_file_selection(file_engine);
         }
     };
 
+    let on_file_change = move |evt: FormEvent| {
+        if is_transcribing() {
+            return;
+        }
+        if let Some(file_engine) = evt.files() {
+            handle_file_selection(file_engine);
+        }
+    };
+
+    let on_clear_or_cancel = move |_| {
+        // Reset Dioxus state
+        selected_file.set(None);
+        status.set(TranscriptionStatus::Idle);
+
+        // Reset the native file input's value to allow re-selection of the same file.
+        let _ = eval(r#"document.getElementById('file-upload-input').value = '';"#);
+
+        // Note: For a real implementation, we would also need to cancel the running `use_resource` future.
+        // Dioxus 0.6 will make this easier with `use_future` and `use_coroutine`.
+    };
+
+    // --- Dynamic CSS classes for the upload area ---
+    let mut upload_area_class = String::from("upload-area");
+    if is_dragging() && !is_transcribing() {
+        upload_area_class.push_str(" dragging");
+    }
+    if is_transcribing() {
+        // This can be used to style the area as disabled, e.g., with lower opacity.
+        upload_area_class.push_str(" disabled");
+    }
+
     rsx! {
-        // The main container for the drop zone
         div {
-            class: "upload-area {dragging_class}",
-            // Event handlers for drag-and-drop functionality
-            ondragover: move |evt| {
-                // Prevent the browser's default behavior to allow for a drop.
-                evt.prevent_default();
-                is_dragging.set(true);
-            },
-            ondragleave: move |evt| {
-                // It's good practice to prevent default on all dnd events.
-                evt.prevent_default();
-                is_dragging.set(false);
-            },
-            ondrop: on_drop,
+            class: "transcription-panel",
+            h2 { "Transcription" }
+            div {
+                class: "{upload_area_class}",
 
-            // Hidden file input, triggered by the button
-            input {
-                r#type: "file",
-                id: "file-upload-input",
-                accept: "audio/*",
-                multiple: false,
-                style: "display: none;",
-                onchange: on_file_change,
-            },
-
-            // --- Conditional Rendering ---
-            // Render content based on whether a file has been selected
-            if let Some(file_engine) = selected_file() {
-                if let Some(file_name) = file_engine.files().first() {
-                    div {
-                        class: "upload-content",
-                        p { "Selected file: ", strong { "{file_name}" } }
-                        // Button to clear the selection and return to the initial state
-                        button {
-                            onclick: move |_| selected_file.set(None),
-                            "Clear Selection"
-                        }
+                // --- Drag-and-Drop Event Handlers ---
+                ondragover: move |evt| {
+                    if !is_transcribing() {
+                        evt.prevent_default();
+                        is_dragging.set(true);
                     }
-                }
-            } else {
-                // Initial state: prompt the user to select a file
+                },
+                ondragleave: move |evt| {
+                    if !is_transcribing() {
+                        evt.prevent_default();
+                        is_dragging.set(false);
+                    }
+                },
+                ondrop: on_drop,
+
+                // --- Hidden file input for the button ---
+                input {
+                    r#type: "file",
+                    id: "file-upload-input",
+                    accept: "audio/*",
+                    multiple: false,
+                    disabled: is_transcribing(),
+                    style: "display: none;",
+                    onchange: on_file_change,
+                },
+
+                // --- UI Content based on State ---
                 div {
                     class: "upload-content",
-                    p { "Drag and drop an audio file here, or click the button below." }
-                    button {
-                        onclick: move |_| {
-                            // This JavaScript snippet programmatically clicks the hidden file input.
-                            // We use `let _ =` to explicitly ignore the `Result`.
-                            let _ = eval(r#"document.getElementById('file-upload-input').click();"#);
-                        },
-                        "Select Audio File"
-                    }
-                }
-            }
-        }
-    }
-}
 
-/// A component to display contextual messages to the user.
-#[component]
-fn MessageArea(props: MessageAreaProps) -> Element {
-    rsx! {
-        div {
-            // This area will be used later to display transcription progress and results.
-            if props.selected_file.read().is_none() {
-                p {
-                    class: "status-message",
-                    "Please select a file to begin transcription."
-                }
-            } else {
-                // A placeholder message for when a file is ready
-                p {
-                    class: "status-message",
-                    "File ready. The next step will be to add a 'Transcribe' button."
+                    // Show selected file name when available
+                    if let Some(file_engine) = selected_file() {
+                        if let Some(file_name) = file_engine.files().first() {
+                             p { "Selected file: ", strong { "{file_name}" } }
+                        }
+                    }
+
+                    // Show content and buttons based on the current status
+                    match status() {
+                        TranscriptionStatus::Idle => rsx!{
+                            p { "Drag and drop an audio file here, or click the button below." }
+                            button {
+                                onclick: move |_| {
+                                    let _ = eval(r#"document.getElementById('file-upload-input').click();"#);
+                                },
+                                "Select Audio File"
+                            }
+                        },
+                        TranscriptionStatus::FileSelected => rsx!{
+                            div {
+                                class: "action-buttons",
+                                button {
+                                    class: "button-clear",
+                                    onclick: on_clear_or_cancel,
+                                    "Clear Selection"
+                                }
+                                button {
+                                    class: "button-transcribe",
+                                    onclick: move |_| status.set(TranscriptionStatus::Transcribing),
+                                    "Transcribe Audio"
+                                }
+                            }
+                        },
+                        TranscriptionStatus::Transcribing => rsx!{
+                            p { class: "transcribing-message", "Transcribing... Please wait." }
+                            button {
+                                class: "button-cancel",
+                                onclick: on_clear_or_cancel,
+                                "Cancel"
+                            }
+                        },
+                    }
                 }
             }
         }

@@ -2,17 +2,15 @@ mod api;
 mod components;
 mod config;
 mod hooks;
-
+pub mod state;
 use crate::config::DEFAULT_API_URL;
 use crate::hooks::persistent::use_persistent;
+use crate::state::{AppState, TranscriptionUiStatus};
 use dioxus::prelude::*;
 
 fn main() {
-    // Initialize the logger for wasm-bindgen.
-    // This allows `log::info!`, `log::error!`, etc. to work in the browser console.
     wasm_logger::init(wasm_logger::Config::default());
     log::info!("Logger initialized. Starting Leontine application...");
-
     dioxus::launch(App);
 }
 
@@ -20,55 +18,129 @@ fn main() {
 fn App() -> Element {
     let title = "Leontine - Audio Transcription";
 
-    // --- Lifted State ---
-    // The `api_url` state is owned by the parent `App` component.
-    // It is the single source of truth for the entire application.
-    let api_url = use_persistent("api_url", || DEFAULT_API_URL.to_string());
+    // --- Global State Initialization ---
+    // All shared state is created here and provided to the context.
+    let app_state = AppState {
+        // Persisted state
+        api_url: use_persistent("api_url", || DEFAULT_API_URL.to_string()),
+        active_job: use_persistent("leontine-active-job", || None),
+        // Volatile state
+        api_status: use_signal(|| None),
+        job_state: use_signal(|| None),
+        transcription_ui_status: use_signal(TranscriptionUiStatus::default),
+    };
 
-    rsx! {
-        // Set up document head
-        head {
+    use_context_provider(|| app_state);
+
+    // Set up periodic API status checking
+    let api_url = app_state.api_url.get();
+    let api_status = app_state.api_status;
+
+    // Check API status on component mount
+    use_effect(move || {
+        to_owned![api_url, api_status];
+        wasm_bindgen_futures::spawn_local(async move {
+            if !api_url.is_empty() {
+                match crate::api::get_status(&api_url).await {
+                    Ok(status) => api_status.set(Some(Ok(status))),
+                    Err(err) => api_status.set(Some(Err(err))),
+                }
+            }
+        });
+    });
+
+    // API status polling setup
+    let mut timer_handle = use_signal(|| None::<gloo_timers::callback::Interval>);
+
+    // Initial API status check
+    {
+        let api_url_str = app_state.api_url.get().clone();
+        let mut api_status_ref = app_state.api_status;
+
+        use_effect(move || {
+            let url = api_url_str.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if !url.is_empty() {
+                    match crate::api::get_status(&url).await {
+                        Ok(status) => api_status_ref.set(Some(Ok(status))),
+                        Err(err) => api_status_ref.set(Some(Err(err))),
+                    }
+                }
+            });
+        });
+    }
+
+    // Set up periodic API status polling
+    {
+        let api_url_str = app_state.api_url.get().clone();
+        let mut api_status_ref = app_state.api_status;
+
+        use_effect(move || {
+            // Create timer outside of reactive context
+            let timer_fn = {
+                let url = api_url_str.clone();
+                let mut status = api_status_ref;
+                move || {
+                    let url_clone = url.clone();
+                    let mut status_clone = status;
+                    wasm_bindgen_futures::spawn_local(async move {
+                        if !url_clone.is_empty() {
+                            match crate::api::get_status(&url_clone).await {
+                                Ok(s) => status_clone.set(Some(Ok(s))),
+                                Err(e) => status_clone.set(Some(Err(e))),
+                            }
+                        }
+                    });
+                }
+            };
+
+            let handle = gloo_timers::callback::Interval::new(30_000, timer_fn);
+            timer_handle.set(Some(handle));
+
+            // Return nothing - we'll handle cleanup separately
+        });
+    }
+
+    // Cleanup timer when component is unmounted
+    use_drop(move || {
+        if let Some(handle) = timer_handle.take() {
+            handle.cancel();
+        }
+    });
+
+    rsx! {head {
             title { "{title}" }
-            style {
-                {include_str!("../assets/main.css")}
-            }
-            style {
-                {include_str!("../assets/api-status.css")}
-            }
+            link { rel: "stylesheet", href: "https://unpkg.com/sakura.css/css/sakura.css" }
+            style { {include_str!("../assets/main.css")} }
         }
 
-        // Application container
         div {
             class: "app-container",
+            header { class: "app-header", h1 { "{title}" } }
 
-            header {
-                class: "app-header",
-                h1 { "{title}" }
-            }
-
-            // --- Child Components ---
-            // The shared `api_url` state is passed down to child components as a prop.
             section {
                 class: "settings-section",
-                // The `SettingsPanel` receives the signal to read and write the URL.
-                components::settings::SettingsPanel { api_url: api_url }
+                components::settings::SettingsPanel {
+                    api_url: use_context::<AppState>().api_url
+                }
             }
 
             section {
                 class: "api-status-section",
-                // The `ApiStatus` component receives the signal to read the URL.
-                components::api_status::ApiStatus { api_url: api_url }
+                components::api_status::ApiStatusDisplay {}
             }
 
             section {
                 class: "transcription-section",
-                components::transcription::TranscriptionPanel { api_url: api_url }
+                components::transcription::TranscriptionPanel {
+                    api_url: use_context::<AppState>().api_url
+                }
             }
 
             footer {
                 class: "app-footer",
                 p {
-                    "Powered by "
+                    "Powered by ",
                     a {
                         href: "https://github.com/jbousquie/whisper_api",
                         target: "_blank",

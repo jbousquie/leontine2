@@ -6,6 +6,9 @@ Leontine is a responsive web application built with Rust and the Dioxus framewor
 
 The application is under active development. The core infrastructure for settings management and real-time API monitoring is complete. The next phase focuses on implementing the transcription workflow.
 
+> **⚠️ WARNING: Architecture Simplification in Progress**
+> The current architecture is overly complex for such a simple application. We are working on significant simplifications: 3 core components with a single shared state (each component limited to updating only its own data), one cycling process to request API status, and one terminable cycling process to request job status when needed.
+
 ## Core Features
 
 The user interface is composed of two main functional components:
@@ -25,18 +28,19 @@ The user interface is composed of two main functional components:
 
 ## Technical Architecture
 
-The application is built on modern Rust and Dioxus patterns.
+The application is built on modern Rust and Dioxus patterns with a focus on simplicity.
 
 ### Key Implementation Patterns
-- **Component-Based UI**: The application is broken down into modular, reusable components (`SettingsPanel`, `ApiStatus`).
-- **Lifted State Management**: To ensure a single source of truth, shared state (like the `api_url` signal) is "lifted up" to the nearest common ancestor component, `App`. The `App` component owns the state and is the single source of truth.
-- **State Sharing via Props**: The parent `App` component passes the shared state down to child components (`SettingsPanel`, `ApiStatus`) as reactive props. This allows sibling components to communicate and stay in sync, as changes made in one component are automatically reflected in the other.
-- **Reactive Asynchronous Operations**: The `use_resource` hook is used to handle asynchronous API calls in a reactive and idiomatic way. The resource automatically re-runs when its dependencies (like the shared `api_url` signal) change.
-- **Component Lifecycle Hooks**:
-    - `use_hook` is leveraged for one-time setup logic, such as initializing timers, which should not be re-run on every render.
-    - `use_drop` provides a dedicated hook for safe, guaranteed cleanup (e.g., clearing timers) when a component unmounts.
-- **Custom State Hooks**: A `use_persistent` hook abstracts away the logic for interacting with `localStorage`, making state persistence clean and reusable.
-- **Time-Based Reactivity**: Uses `gloo-timers` (`Timeout`, `Interval`) for time-based events. These timers trigger updates to a dedicated `refresh_trigger` signal, integrating the imperative nature of timers with Dioxus's declarative, reactive system.
+- **Simplified Component Structure**: The application consists of only 3 essential components:
+  1. **SettingsPanel**: Manages API configuration
+  2. **ApiStatusDisplay**: Shows the current status of the API
+  3. **TranscriptionPanel**: Handles file uploading and job monitoring
+- **Centralized State Management**: A single shared `AppState` with clear ownership boundaries - each component is only permitted to update its own section of the shared state.
+- **Minimalist Polling Strategy**:
+  1. One simple polling process for API status that runs at regular intervals
+  2. One terminable job status polling process that only activates when a transcription job is submitted
+- **Simplified Lifecycle Management**: Clear separation between component initialization, operation, and cleanup phases
+- **Predictable Data Flow**: One-way data flow with clear state update procedures to avoid infinite loops and race conditions
 
 ### Core Dependencies
 - `dioxus = { version = "0.6.3", features = ["web"] }`
@@ -44,6 +48,7 @@ The application is built on modern Rust and Dioxus patterns.
 - `serde` / `serde_json` for serialization
 - `chrono` for time formatting
 - `wasm-logger` for browser console logging
+- `wasm-bindgen-futures` for asynchronous operations
 
 ## Future Roadmap
 

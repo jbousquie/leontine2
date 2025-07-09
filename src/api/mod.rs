@@ -5,6 +5,7 @@ use crate::dioxus_elements::FileEngine;
 use gloo_net::http::Request;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::sync::Arc;
 use web_sys::js_sys::{Array, Uint8Array};
 use web_sys::wasm_bindgen::JsValue;
@@ -21,6 +22,17 @@ pub enum ApiError {
     ParseError(String),
     /// The file from the file engine was not available or couldn't be read.
     FileNotAvailable,
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ApiError::RequestFailed(s) => write!(f, "Request failed: {}", s),
+            ApiError::HttpError(status, text) => write!(f, "Server error {}: {}", status, text),
+            ApiError::ParseError(s) => write!(f, "Failed to parse response: {}", s),
+            ApiError::FileNotAvailable => write!(f, "File is not available."),
+        }
+    }
 }
 
 // --- From Trait Implementations ---
@@ -47,14 +59,33 @@ impl From<JsValue> for ApiError {
     }
 }
 
+/// Represents the possible statuses of a transcription job on the API.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub enum JobStatus {
+    Queued,
+    Processing,
+    Completed,
+    Failed,
+}
+
 /// Represents the JSON response from a successful asynchronous transcription submission.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TranscriptionJob {
     pub job_id: String,
-    pub job_status: String,
-    pub queued_at: String,
-    pub message: String,
-    pub url: String,
+    pub status_url: String,
+}
+
+/// Represents the state of a transcription job, returned by the status endpoint.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct JobState {
+    pub status: JobStatus,
+    /// The position in the queue, if the job is queued.
+    #[serde(default)]
+    pub queue_position: Option<u32>,
+    /// Additional data, which could be the transcription result or an error message.
+    #[serde(default)]
+    pub data: Option<String>,
 }
 
 /// Represents the parameters for a transcription job, to be serialized as JSON.
@@ -64,7 +95,7 @@ struct TranscriptionParams {
 }
 
 /// API status response structure
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ApiStatus {
     pub server: ServerConfig,
     pub processing: ProcessingConfig,
@@ -75,7 +106,7 @@ pub struct ApiStatus {
 }
 
 /// Server configuration section of the API status response
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ServerConfig {
     pub host: String,
     pub port: String,
@@ -85,7 +116,7 @@ pub struct ServerConfig {
 }
 
 /// Processing configuration section of the API status response
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ProcessingConfig {
     pub concurrent_mode: bool,
     pub max_concurrent_jobs: u32,
@@ -97,7 +128,7 @@ pub struct ProcessingConfig {
 }
 
 /// Resources configuration section of the API status response
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ResourcesConfig {
     pub max_file_size: u64,
     pub job_retention_hours: u32,
@@ -105,13 +136,13 @@ pub struct ResourcesConfig {
 }
 
 /// Security configuration section of the API status response
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct SecurityConfig {
     pub authorization_enabled: bool,
 }
 
 /// Queue state section of the API status response
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct QueueState {
     pub queued_jobs: u32,
     pub processing_jobs: u32,
@@ -204,4 +235,40 @@ pub async fn submit_transcription(
     let job: TranscriptionJob = response.json().await?;
     info!("Transcription job submitted successfully: {:?}", job);
     Ok(job)
+}
+
+/// Fetches the status of a specific transcription job from the API.
+pub async fn get_job_status(api_url: &str, job_id: &str) -> Result<JobState, ApiError> {
+    if api_url.is_empty() {
+        warn!("API URL is empty, cannot check job status");
+        return Err(ApiError::RequestFailed(
+            "API URL is not configured".to_string(),
+        ));
+    }
+
+    let url = format!("{}/transcription/{}", api_url, job_id);
+    info!("Fetching job status from: {}", url);
+
+    let response = Request::get(&url)
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+
+    if !response.ok() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        error!(
+            "API returned error status {} for job {}: {}",
+            status, job_id, text
+        );
+        return Err(ApiError::HttpError(status, text));
+    }
+
+    let state: JobState = response.json().await?;
+
+    info!(
+        "Successfully parsed status for job {}: {:?}",
+        job_id, state.status
+    );
+    Ok(state)
 }

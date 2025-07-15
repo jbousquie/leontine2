@@ -4,6 +4,8 @@
 
 use crate::api::{ApiError, ApiStatus, JobState, TranscriptionJob};
 use crate::hooks::persistent::UsePersistent;
+use chrono::{self, prelude::*};
+use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 /// Represents the possible UI states for the transcription panel.
@@ -18,6 +20,19 @@ pub enum TranscriptionUiStatus {
     Monitoring,
     Completed(String),
     Error(String),
+}
+
+/// Represents the connection status of the WhisperX API endpoint.
+/// This provides a clearer state machine than `Option<Result<...>>`.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub enum ApiConnectionStatus {
+    /// The application has not yet attempted to connect, or a check is in progress.
+    #[default]
+    Pending,
+    /// A successful connection has been made, and the API status is available.
+    Available(ApiStatus, DateTime<Utc>),
+    /// An attempt to connect to the API failed.
+    Unavailable(ApiError, DateTime<Utc>),
 }
 
 /// The global application state.
@@ -37,8 +52,8 @@ pub struct AppState {
     pub active_job: UsePersistent<Option<TranscriptionJob>>,
 
     // --- Volatile State ---
-    /// The last known status of the API server.
-    pub api_status: Signal<Option<Result<ApiStatus, ApiError>>>,
+    /// The last known connection status of the API server.
+    pub api_connection_status: Signal<ApiConnectionStatus>,
     /// The last known state of the active transcription job.
     pub job_state: Signal<Option<Result<JobState, ApiError>>>,
     /// The current status of the transcription panel's UI.

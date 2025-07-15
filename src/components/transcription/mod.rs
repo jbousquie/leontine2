@@ -5,6 +5,7 @@ use crate::api::{self, ApiError, JobState, JobStatus, TranscriptionJob};
 use crate::document::eval;
 use crate::hooks::persistent::use_persistent;
 use crate::hooks::persistent::UsePersistent;
+use crate::state::{ApiConnectionStatus, AppState};
 use dioxus::html::HasFileData;
 use dioxus::prelude::*;
 use dioxus_elements::FileEngine;
@@ -34,6 +35,7 @@ pub struct TranscriptionPanelProps {
 #[component]
 pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
     // --- State Signals ---
+    let app_state = use_context::<AppState>();
     let mut ui_status = use_signal(|| TranscriptionUiStatus::Idle);
     let mut selected_file: Signal<Option<Arc<dyn FileEngine>>> = use_signal(|| None);
     let mut is_dragging = use_signal(|| false);
@@ -47,9 +49,20 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
 
     let api_url_prop = props.api_url;
 
+    // Derived signal to check if API is available
+    let is_api_available = use_memo(move || {
+        matches!(
+            *app_state.api_connection_status.read(),
+            ApiConnectionStatus::Available(_, _)
+        )
+    });
+
     // --- Effect to check for an existing job on load ---
     use_effect(move || {
-        if active_job.get().is_some() && *ui_status.peek() == TranscriptionUiStatus::Idle {
+        if *is_api_available.read()
+            && active_job.get().is_some()
+            && *ui_status.peek() == TranscriptionUiStatus::Idle
+        {
             info!("Found active job on load, starting monitoring.");
             ui_status.set(TranscriptionUiStatus::Monitoring);
         }
@@ -87,49 +100,60 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
 
     // --- Resource for polling the job status ---
     let job_status_resource = use_resource(move || async move {
-        refresh_trigger.into_value();
+        refresh_trigger.into_value(); // Trigger resource re-run on refresh_trigger change
 
-        if let Some(job) = active_job.get() {
-            let api_url = api_url_prop.get();
-            let result = api::get_job_status(&api_url, &job.job_id).await;
-            let mut should_clear_job = false;
+        // Only poll if API is available and there's an active job
+        if *is_api_available.read() {
+            if let Some(job) = active_job.get() {
+                let api_url = api_url_prop.get();
+                let result = api::get_job_status(&api_url, &job.job_id).await;
+                let mut should_clear_job = false;
 
-            match &result {
-                Ok(state) => match state.status {
-                    JobStatus::Completed => {
-                        let result_data = state.data.clone().unwrap_or_else(|| {
-                            "Transcription completed, but no data was returned.".to_string()
-                        });
-                        ui_status.set(TranscriptionUiStatus::Completed(result_data));
+                match &result {
+                    Ok(state) => match state.status {
+                        JobStatus::Completed => {
+                            let result_data = state.data.clone().unwrap_or_else(|| {
+                                "Transcription completed, but no data was returned.".to_string()
+                            });
+                            ui_status.set(TranscriptionUiStatus::Completed(result_data));
+                            should_clear_job = true;
+                        }
+                        JobStatus::Failed => {
+                            let error_message =
+                                state.data.as_deref().unwrap_or("No details provided.");
+                            error!("Job {} failed on server: {}", job.job_id, error_message);
+                            ui_status.set(TranscriptionUiStatus::Error(format!(
+                                "Job failed: {}",
+                                error_message
+                            )));
+                            should_clear_job = true;
+                        }
+                        _ => { /* Queued or Processing, just update state and continue */ }
+                    },
+                    Err(ApiError::HttpError(404, _)) => {
+                        error!(
+                            "Job {} not found on server. Clearing local job.",
+                            job.job_id
+                        );
+                        ui_status.set(TranscriptionUiStatus::Error(
+                            "The previous job was not found on the server. It may have expired."
+                                .to_string(),
+                        ));
                         should_clear_job = true;
                     }
-                    JobStatus::Failed => {
-                        let error_message = state.data.as_deref().unwrap_or("No details provided.");
-                        error!("Job {} failed on server: {}", job.job_id, error_message);
-                        ui_status.set(TranscriptionUiStatus::Error(format!(
-                            "Job failed: {}",
-                            error_message
-                        )));
-                        should_clear_job = true;
+                    Err(e) => {
+                        // Other errors, just display and polling will continue if API is still available
+                        error!("Error polling job status: {:?}", e);
+                        job_state.set(Some(Err(e.clone()))); // Set job_state to error
                     }
-                    _ => { /* Queued or Processing, just update state and continue */ }
-                },
-                Err(ApiError::HttpError(404, _)) => {
-                    error!(
-                        "Job {} not found on server. Clearing local job.",
-                        job.job_id
-                    );
-                    ui_status.set(TranscriptionUiStatus::Error(
-                        "The previous job was not found on the server. It may have expired."
-                            .to_string(),
-                    ));
-                    should_clear_job = true;
                 }
-                Err(_) => { /* Other errors will just be displayed, and polling will continue */ }
-            }
 
-            job_state.set(Some(result));
-            return should_clear_job;
+                if let Ok(state) = result {
+                    job_state.set(Some(Ok(state)));
+                }
+
+                return should_clear_job;
+            }
         }
 
         false
@@ -152,8 +176,8 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
     use_effect(move || {
         let current_status = ui_status.read().clone();
 
-        // Only act when the status changes
-        if current_status != *previous_status.read() {
+        // Only act when the status changes, and only if API is available
+        if *is_api_available.read() && current_status != *previous_status.read() {
             let is_monitoring = current_status == TranscriptionUiStatus::Monitoring;
 
             // Cancel existing timer if there is one
@@ -164,7 +188,7 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                 }
             }
 
-            // Create new timer only if we're in monitoring state
+            // Create new timer only if we're in monitoring state AND API is available
             if is_monitoring {
                 info!("Starting polling timer for monitoring");
 
@@ -183,6 +207,18 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
 
             // Update previous status
             previous_status.set(current_status);
+        } else if !*is_api_available.read() {
+            // If API becomes unavailable, stop any monitoring and reset UI to idle or error.
+            if let Some(timer) = interval_timer.write().take() {
+                info!("API unavailable, cancelling monitoring timer.");
+                timer.cancel();
+            }
+            if *ui_status.peek() == TranscriptionUiStatus::Monitoring
+                || *ui_status.peek() == TranscriptionUiStatus::Submitting
+            {
+                ui_status.set(TranscriptionUiStatus::Idle); // Or perhaps a more specific error state
+                job_state.set(None); // Clear job state display
+            }
         }
     });
 
@@ -195,15 +231,18 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
     });
 
     // --- Event Handlers and Helpers ---
-    let is_locked = move || {
+    let is_locked_ui = move || {
         !matches!(
             ui_status(),
             TranscriptionUiStatus::Idle | TranscriptionUiStatus::FileSelected
         )
     };
 
+    // Combine UI locked status with API availability
+    let is_disabled = move || is_locked_ui() || !*is_api_available.read();
+
     let mut handle_file_selection = move |file_engine: Arc<dyn FileEngine>| {
-        if is_locked() {
+        if is_disabled() {
             return;
         }
         if !file_engine.files().is_empty() {
@@ -222,10 +261,10 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
 
     // --- Dynamic CSS classes ---
     let mut upload_area_class = String::from("upload-area");
-    if is_dragging() && !is_locked() {
+    if is_dragging() && !is_disabled() {
         upload_area_class.push_str(" dragging");
     }
-    if is_locked() {
+    if is_disabled() {
         upload_area_class.push_str(" disabled");
     }
 
@@ -235,11 +274,12 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
             h2 { "Transcription" }
             div {
                 class: "{upload_area_class}",
-                ondragover: move |evt| { if !is_locked() { evt.prevent_default(); is_dragging.set(true); } },
-                ondragleave: move |evt| { if !is_locked() { evt.prevent_default(); is_dragging.set(false); } },
+                // Disable drag/drop events if API is unavailable or UI is locked
+                ondragover: move |evt| { if !is_disabled() { evt.prevent_default(); is_dragging.set(true); } },
+                ondragleave: move |evt| { if !is_disabled() { evt.prevent_default(); is_dragging.set(false); } },
                 ondrop: move |evt| {
                     evt.prevent_default();
-                    if !is_locked() {
+                    if !is_disabled() {
                         is_dragging.set(false);
                         if let Some(file_engine) = evt.files() { handle_file_selection(file_engine); }
                     }
@@ -249,7 +289,7 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                     id: "file-upload-input",
                     accept: "audio/*",
                     multiple: false,
-                    disabled: is_locked(),
+                    disabled: is_disabled(), // Input disabled if API unavailable
                     style: "display: none;",
                     onchange: move |evt| { if let Some(file_engine) = evt.files() { handle_file_selection(file_engine); } },
                 },
@@ -260,16 +300,30 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                             p { "Selected file: ", strong { "{file_name}" } }
                         }
                     }
+
+                    // Render different UI states
                     match ui_status() {
                         TranscriptionUiStatus::Idle => rsx! {
                             p { "Drag and drop an audio file here, or click the button below." }
-                            button { onclick: move |_| { let _ = eval(r#"document.getElementById('file-upload-input').click();"#); }, "Select Audio File" }
+                            button {
+                                onclick: move |_| { let _ = eval(r#"document.getElementById('file-upload-input').click();"#); },
+                                disabled: !*is_api_available.read(), // Button disabled if API unavailable
+                                "Select Audio File"
+                            }
+                            if !*is_api_available.read() {
+                                p { class: "error-message", "API is unreachable. Please check settings." }
+                            }
                         },
                         TranscriptionUiStatus::FileSelected => rsx! {
                             div {
                                 class: "action-buttons",
                                 button { class: "button-clear", onclick: reset_state, "Clear Selection" }
-                                button { class: "button-transcribe", onclick: move |_| ui_status.set(TranscriptionUiStatus::Submitting), "Transcribe Audio" }
+                                button {
+                                    class: "button-transcribe",
+                                    onclick: move |_| ui_status.set(TranscriptionUiStatus::Submitting),
+                                    disabled: !*is_api_available.read(), // Button disabled if API unavailable
+                                    "Transcribe Audio"
+                                }
                             }
                         },
                         TranscriptionUiStatus::Submitting => rsx! { p { class: "transcribing-message", "Submitting job... Please wait." } },
@@ -280,8 +334,11 @@ pub fn TranscriptionPanel(props: TranscriptionPanelProps) -> Element {
                                     JobStatus::Processing => "Job is being processed...".to_string(),
                                     _ => "Waiting for status update...".to_string(),
                                 }
-                            } else if let Some(Err(_)) = job_state() { "Error polling job status... Retrying.".to_string() }
-                            else { "Checking job status...".to_string() };
+                            } else if let Some(Err(e)) = job_state() {
+                                format!("Error polling job status: {}. Retrying...", e)
+                            } else {
+                                "Checking job status...".to_string()
+                            };
                             rsx! { p { class: "transcribing-message", "{status_message}" } }
                         },
                         TranscriptionUiStatus::Completed(result) => rsx! {

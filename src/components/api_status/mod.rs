@@ -1,48 +1,40 @@
 //! API Status display component.
-//! This is a "dumb" component that simply renders the API status it receives as a prop.
+//! This component renders the API status based on the shared `ApiConnectionStatus` state.
 
-use crate::state::AppState;
+use crate::state::{ApiConnectionStatus, AppState};
 use dioxus::prelude::*;
-use web_sys::js_sys::Date;
 
-/// A component to display the API status.
+/// A component to display the API status. It gets its data from the shared context.
 #[component]
 #[allow(non_snake_case)]
 pub fn ApiStatusDisplay() -> Element {
     let app_state = use_context::<AppState>();
-    let api_status = app_state.api_status.read();
-    let (flag_color, status_message, queue_info) = match &*api_status {
-        Some(Ok(status)) => (
+    // Read the connection status from the global state.
+    let connection_status = app_state.api_connection_status.read();
+
+    // Determine the display properties based on the current connection status.
+    let (flag_color, status_message, queue_info, last_checked) = match &*connection_status {
+        ApiConnectionStatus::Available(status, timestamp) => (
             "green",
             "API Online".to_string(),
             format!(
                 "{} jobs in queue, {} jobs processing",
                 status.queue_state.queued_jobs, status.queue_state.processing_jobs
             ),
+            format!("Last checked at {}", timestamp.format("%H:%M:%S")),
         ),
-        Some(Err(err)) => ("red", err.to_string(), "".to_string()),
-        None => (
+        ApiConnectionStatus::Unavailable(err, timestamp) => (
+            "red",
+            err.to_string(),
+            "".to_string(),
+            format!("Last check failed at {}", timestamp.format("%H:%M:%S")),
+        ),
+        ApiConnectionStatus::Pending => (
             "yellow",
             "Checking API status...".to_string(),
             "".to_string(),
+            "".to_string(), // No timestamp when pending
         ),
-    };
-
-    // We only show the timestamp if a check has actually been performed.
-    let last_checked = if api_status.is_some() {
-        let now_ms = Date::now();
-        let now_secs = (now_ms / 1000.0) as i64;
-        let now_nanos = ((now_ms % 1000.0) * 1_000_000.0) as u32;
-
-        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now_secs, now_nanos)
-            .unwrap_or_default()
-            .format("%H:%M:%S")
-            .to_string();
-
-        format!("Last checked at {}", dt)
-    } else {
-        // If there's no status, we don't show a timestamp.
-        "".to_string()
     };
 
     rsx! {

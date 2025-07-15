@@ -3,10 +3,12 @@ mod components;
 mod config;
 mod hooks;
 pub mod state;
-use crate::config::DEFAULT_API_URL;
+
+use crate::config::{API_STATUS_CHECK_INTERVAL_MS, DEFAULT_API_URL};
 use crate::hooks::persistent::use_persistent;
-use crate::state::{AppState, TranscriptionUiStatus};
+use crate::state::{ApiConnectionStatus, AppState, TranscriptionUiStatus};
 use dioxus::prelude::*;
+use gloo_timers::callback::Interval;
 
 fn main() {
     wasm_logger::init(wasm_logger::Config::default());
@@ -20,95 +22,57 @@ fn App() -> Element {
 
     // --- Global State Initialization ---
     // All shared state is created here and provided to the context.
-    let app_state = AppState {
-        // Persisted state
+    let mut app_state = AppState {
         api_url: use_persistent("api_url", || DEFAULT_API_URL.to_string()),
         active_job: use_persistent("leontine-active-job", || None),
-        // Volatile state
-        api_status: use_signal(|| None),
+        api_connection_status: use_signal(ApiConnectionStatus::default),
         job_state: use_signal(|| None),
         transcription_ui_status: use_signal(TranscriptionUiStatus::default),
     };
 
     use_context_provider(|| app_state);
 
-    // Set up periodic API status checking
-    let api_url = app_state.api_url.get();
-    let api_status = app_state.api_status;
-
-    // Check API status on component mount
-    use_effect(move || {
-        to_owned![api_url, api_status];
-        wasm_bindgen_futures::spawn_local(async move {
-            if !api_url.is_empty() {
-                match crate::api::get_status(&api_url).await {
-                    Ok(status) => api_status.set(Some(Ok(status))),
-                    Err(err) => api_status.set(Some(Err(err))),
-                }
-            }
-        });
-    });
-
-    // API status polling setup
-    let mut timer_handle = use_signal(|| None::<gloo_timers::callback::Interval>);
-
-    // Initial API status check
-    {
-        let api_url_str = app_state.api_url.get().clone();
-        let mut api_status_ref = app_state.api_status;
-
-        use_effect(move || {
-            let url = api_url_str.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                if !url.is_empty() {
-                    match crate::api::get_status(&url).await {
-                        Ok(status) => api_status_ref.set(Some(Ok(status))),
-                        Err(err) => api_status_ref.set(Some(Err(err))),
-                    }
-                }
-            });
-        });
-    }
-
-    // Set up periodic API status polling
-    {
-        let api_url_str = app_state.api_url.get().clone();
-        let mut api_status_ref = app_state.api_status;
-
-        use_effect(move || {
-            // Create timer outside of reactive context
-            let timer_fn = {
-                let url = api_url_str.clone();
-                let mut status = api_status_ref;
-                move || {
-                    let url_clone = url.clone();
-                    let mut status_clone = status;
-                    wasm_bindgen_futures::spawn_local(async move {
-                        if !url_clone.is_empty() {
-                            match crate::api::get_status(&url_clone).await {
-                                Ok(s) => status_clone.set(Some(Ok(s))),
-                                Err(e) => status_clone.set(Some(Err(e))),
-                            }
-                        }
-                    });
-                }
-            };
-
-            let handle = gloo_timers::callback::Interval::new(30_000, timer_fn);
-            timer_handle.set(Some(handle));
-
-            // Return nothing - we'll handle cleanup separately
-        });
-    }
-
-    // Cleanup timer when component is unmounted
-    use_drop(move || {
-        if let Some(handle) = timer_handle.take() {
-            handle.cancel();
+    // This resource will fetch the API status. It automatically re-runs whenever
+    // its dependencies change (in this case, when api_url changes).
+    let mut api_status_resource = use_resource(move || async move {
+        let api_url = app_state.api_url.get();
+        if api_url.is_empty() {
+            return ApiConnectionStatus::Unavailable(
+                crate::api::ApiError::RequestFailed("API URL is not configured".to_string()),
+                chrono::Utc::now(),
+            );
+        }
+        match crate::api::get_status(&api_url).await {
+            Ok(status) => ApiConnectionStatus::Available(status, chrono::Utc::now()),
+            Err(err) => ApiConnectionStatus::Unavailable(err, chrono::Utc::now()),
         }
     });
 
-    rsx! {head {
+    // When the resource finishes fetching, we update the global state.
+    // This effect runs whenever api_status_resource changes.
+    use_effect(move || {
+        if let Some(status) = api_status_resource.value().read().clone() {
+            app_state.api_connection_status.set(status);
+        }
+    });
+
+    // Set up a simple interval timer to periodically refresh the resource,
+    // which keeps the API status up-to-date.
+    use_effect(move || {
+        let timer = Interval::new(API_STATUS_CHECK_INTERVAL_MS as u32, move || {
+            // `restart` will cause the `use_resource` to run its future again.
+            api_status_resource.restart();
+        });
+
+        // The on_cleanup function is crucial to prevent memory leaks.
+        // It runs when the component is unmounted.
+        use_drop(move || {
+            timer.cancel();
+        });
+    });
+
+    rsx! {
+        head {
             title { "{title}" }
             link { rel: "stylesheet", href: "https://unpkg.com/sakura.css/css/sakura.css" }
             style { {include_str!("../assets/main.css")} }

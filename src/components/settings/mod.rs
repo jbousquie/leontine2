@@ -2,6 +2,7 @@
 //! Allows users to configure the API URL. The state is lifted to the parent component.
 
 use crate::hooks::persistent::UsePersistent;
+use crate::state::{ApiConnectionStatus, AppState};
 use dioxus::prelude::*;
 
 /// Settings panel component for managing API configuration.
@@ -20,6 +21,9 @@ pub fn SettingsPanel(mut api_url: UsePersistent<String>) -> Element {
     use_effect(move || {
         is_modified.set(input_value.read().as_str() != api_url.get().as_str());
     });
+
+    let app_state = use_context::<AppState>();
+    let api_connection_status = app_state.api_connection_status.read();
 
     rsx! {
         div {
@@ -60,6 +64,17 @@ pub fn SettingsPanel(mut api_url: UsePersistent<String>) -> Element {
                         class: "saved-message",
                         "Saved"
                     }
+                }
+                match &*api_connection_status {
+                    ApiConnectionStatus::Pending => rsx! {
+                        span { class: "status-text yellow", "Checking API status..." }
+                    },
+                    ApiConnectionStatus::Available(_, _) => rsx! {
+                        span { class: "status-text green", "API is online" }
+                    },
+                    ApiConnectionStatus::Unavailable(_, _) => rsx! {
+                        span { class: "status-text red", "API is unreachable" }
+                    },
                 }
             }
         }
